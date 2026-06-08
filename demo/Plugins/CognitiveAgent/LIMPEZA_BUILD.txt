@@ -1,0 +1,33 @@
+CAUSA RAIZ DO ERRO 'gflags/gflags.h not found' — RESOLVIDO
+===========================================================
+
+DESCOBERTA (confirmada no código-fonte do PyTorch):
+O arquivo c10/util/Flags.h decide se inclui gflags assim:
+
+    #ifdef C10_USE_GFLAGS
+        #include <gflags/gflags.h>
+    #endif
+
+O teste é #ifdef (EXISTÊNCIA da macro), NÃO #if (valor).
+
+Consequência: definir C10_USE_GFLAGS=0 AINDA satisfaz o #ifdef e dispara
+o include do gflags.h. Era exatamente o que estávamos fazendo errado.
+
+Por isso, quando você COMENTOU as macros no CMI.Build.cs, compilou:
+sem a macro, o #ifdef é falso e o gflags não é incluído.
+
+CORREÇÃO APLICADA (no plugin):
+- LibTorch.Build.cs: REMOVIDAS as linhas C10_USE_GFLAGS=0 / C10_USE_GLOG=0.
+- CognitiveMotionIntelligence.Build.cs: idem.
+- PCH do módulo: agora faz #undef dessas macros (rede de segurança).
+- NativeInferenceComponent.cpp: #undef antes do #include <torch/script.h>.
+
+O QUE VOCÊ PRECISA FAZER NO SEU CMI.Build.cs:
+- MANTENHA as macros C10_USE_GFLAGS / C10_USE_GLOG COMENTADAS (ou removidas).
+  Você já fez isso e funcionou. Estava certo.
+- MANTENHA apenas: bUseRTTI=true; bEnableExceptions=true;
+  PublicDefinitions.Add("NOMINMAX"); PublicDefinitions.Add("_CRT_SECURE_NO_WARNINGS=1");
+- NÃO adicione C10_USE_GFLAGS=0 de volta. Definir como 0 RELIGA o erro.
+
+Em resumo: a ausência da macro é o estado correto. "Desligar" o gflags = não
+definir a macro, não defini-la como zero.

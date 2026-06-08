@@ -1,0 +1,15 @@
+secrets/
+.env
+*.pem
+*.key
+.venv/
+venv/
+__pycache__/
+# Visual Studio 2015/2017 cache/options directory
+.vs/
+.env/
+env/
+runs/
+logs/
+models/
+checkpoints/

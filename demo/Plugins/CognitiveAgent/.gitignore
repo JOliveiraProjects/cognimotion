@@ -1,0 +1,165 @@
+# Unreal Engine 5 specific
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+Platforms/
+*.VC.db
+*.VC.opendb
+.vs/
+*.sln
+*.sln.DotSettings
+*.xcodeproj
+*.xcworkspace
+
+# Rider specific
+.idea/
+*.DotSettings.user
+*.csproj
+*.csproj.user
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.sln.ide
+.Rider/
+._.idea/
+.idea/.idea/
+.idea/.name
+*.sln.DotSettings.user
+
+# Visual Studio (caso alguém use junto)
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.opensdf
+*.sdf
+
+# Compiled Source files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+*.pyc
+
+# Backup files
+*~
+*.bak
+*.backup
+*.old
+*.orig
+
+# Logs and crash reports
+*.log
+*.dmp
+CrashReportClient/
+CrashReports/
+
+# Asset and content cache
+Content/AssetRegistry.bin
+Content/AssetRegistry.bin.*
+Content/AssetRegistry.bin.*.*
+DerivedDataCache/
+DerivedDataCache/*
+
+# Project files
+*.project
+*.target
+*.modules
+*.Build.cs
+*.Target.cs
+
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.supported
+
+# Linux specific
+*.swp
+*.swo
+*~
+.directory
+.download
+.cache/
+*.pid
+*.lock
+
+# Windows specific
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Unreal Engine specific
+*.uasset
+*.umap
+*.upack
+*.uplugin
+*.uproject - !*.uproject
+*.uproject.*
+*.uproject.user
+
+# Platform specific
+Win64/
+Linux/
+Mac/
+Android/
+IOS/
+PS4/
+XboxOne/
+Switch/
+
+# Shader cache
+ShaderCache/
+ShaderBytecode/
+ShaderWorkingDirectory/
+
+# Hot reload
+HotReload/
+*.hotreload
+
+# Packaging
+Releases/
+Saved/StagedBuilds/
+Saved/Cooked/
+Saved/Logs/
+Saved/Sandboxes/
+
+# Rider cache and temp files
+.idea/
+.idea/.idea.CognitiveAgentDemo/
+.idea/.idea.CognitiveAgentDemo.dir/
+.idea/cache/
+.idea/tasks.xml
+.idea/workspace.xml
+.idea/usage.statistics.xml
+.idea/dictionaries/
+.idea/codeStyles/
+.idea/modules.xml
+.idea/misc.xml
+.idea/vcs.xml
+.idea/.gitignore
+.idea/.name
+.RiderHelper/

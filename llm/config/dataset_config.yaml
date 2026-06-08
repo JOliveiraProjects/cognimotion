@@ -1,0 +1,148 @@
+# dataset_config.yaml
+# =====================
+# Configuração do dataset de interações NPC para treinamento DreamerV3.
+#
+# Uso:
+#   python main.py --dataset config/dataset_config.yaml
+#
+# Ou programaticamente:
+#   from datasets.dataset_registry import DatasetRegistry
+#   registry = DatasetRegistry.from_yaml("config/dataset_config.yaml")
+#   registry.load_into_buffer(sequence_buffer)
+
+# ── Parâmetros gerais ────────────────────────────────────────────────────────
+
+# Escala de geração de sequências.
+# 0.1 = debug rápido (~60 seqs)
+# 1.0 = padrão (~560 seqs)
+# 5.0 = dataset grande (~2800 seqs)
+scale: 1.0
+
+# Seed para reprodutibilidade
+seed: 42
+
+# Dimensão da observação (deve coincidir com config.encoder.embedding_dim)
+obs_dim: 256
+
+# Dimensão do espaço de ação (24 = InteractionAction)
+action_dim: 24
+
+
+# ── Subsets habilitados ──────────────────────────────────────────────────────
+
+enable_weapons: true
+enable_ball:    true
+enable_threats: true
+enable_vehicles: true
+enable_mounts:  true
+enable_traffic: true
+
+
+# ── Weights por categoria (oversampling de cenários críticos) ────────────────
+# Valores > 1.0 geram mais sequências dessa categoria
+
+category_weights:
+  weapon:  1.0     # pickup de arma, mira
+  ball:    1.0     # chute, pega, empurra
+  threat:  1.5     # detecção de ameaça — mais crítico
+  vehicle: 1.0     # entrar/sair de carro, moto, bicicleta
+  mount:   0.8     # cavalgar cavalo, bicicleta
+  traffic: 0.8     # resposta ao farol
+
+
+# ── Remapeamento de bones (skeleton customizado) ─────────────────────────────
+# Se o projeto usar um skeleton diferente do SK_Mannequin UE5,
+# mapear os bone names aqui.
+#
+# Exemplo para Paragon-style skeleton:
+#   bone_remap:
+#     hand_r: RightHand
+#     hand_l: LeftHand
+#     foot_r: RightFoot
+#     foot_l: LeftFoot
+#     spine_03: Spine3
+#
+# Deixar vazio para usar SK_Mannequin padrão.
+
+bone_remap: {}
+
+
+# ── Sockets customizados por objeto ─────────────────────────────────────────
+# Sobrescreve o registro padrão de skeleton_targets.py.
+# Formato por object_type (nome do enum):
+#
+# custom_ik_configs:
+#   WEAPON_GUN:
+#     approach_distance: 0.0
+#     interaction_duration_s: 0.3
+#     requires_facing: false
+#     sockets:
+#       - bone_name: hand_r
+#         socket_name: custom_weapon_grip
+#         offset_pos: [0.0, 0.0, 5.0]
+#         offset_rot: [0.0, 90.0, 0.0]
+#         is_primary: true
+#         is_secondary: false
+
+custom_ik_configs: {}
+
+
+# ── Configuração de cenários específicos ─────────────────────────────────────
+
+# Arma de fogo
+weapon_gun:
+  n_pickup_sequences:  50
+  n_aim_sequences:     30
+  min_pickup_distance: 1.5
+  max_pickup_distance: 8.0
+
+# Arma branca
+weapon_melee:
+  n_sequences: 30
+  min_distance: 0.5
+  max_distance: 4.0
+
+# Bola
+ball:
+  n_kick_sequences:  60
+  n_grab_sequences:  40
+  n_push_sequences:  30
+  approach_speed_min: 0.3
+  approach_speed_max: 0.8
+
+# Ameaça
+threat:
+  n_sequences:        80
+  armed_probability:  0.4    # 40% das ameaças são armadas
+  threat_distance_min: 5.0
+  threat_distance_max: 20.0
+
+# Carro
+car:
+  n_enter_exit_sequences: 50
+  approach_distance: 1.5
+  entry_animation_duration_s: 1.2
+
+# Moto
+motorcycle:
+  n_enter_exit_sequences: 40
+  approach_distance: 1.0
+  entry_animation_duration_s: 0.8
+
+# Bicicleta
+bicycle:
+  n_enter_exit_sequences: 30
+  approach_distance: 1.0
+  entry_animation_duration_s: 0.6
+
+# Cavalo
+horse:
+  n_mount_dismount_sequences: 40
+  approach_distance: 1.5
+  mount_animation_duration_s: 1.5
+
+# Farol
+traffic_light:
+  n_sequences: 60
+  red_obey_probability:   0.90   # 90% obedece vermelho
+  green_move_probability: 0.95   # 95% avança no verde
