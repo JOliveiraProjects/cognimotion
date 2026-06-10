@@ -157,14 +157,19 @@ TArray<float> ReadFloatArraySafe(const uint8* D, int32& O, int32 BufSize)
     return Out;
 }
 
-FString ReadString(const uint8* D, int32& O)
+FString ReadString(const uint8* D, int32& O, int32 BufSize)
 {
     const int32 Len = ReadInt32(D, O);
     if (Len <= 0) return FString();
+    // SEGURANÇA: valida que Len não ultrapassa o buffer (pacote malformado).
+    // BufSize<0 desativa a checagem (compat. com chamadas antigas).
+    if (BufSize >= 0 && (O + Len > BufSize || Len > BufSize))
+    {
+        // Pacote inválido: consome o que dá e retorna vazio em vez de ler fora.
+        O = BufSize;
+        return FString();
+    }
     // Cria string a partir de bytes UTF-8 com comprimento explícito.
-    // FString(UTF8_TO_TCHAR(...)) usava construtor null-terminated — se o buffer
-    // contivesse null-bytes antes da posição Len, a string seria truncada.
-    // FUTF8ToTCHAR com comprimento evita essa dependência.
     FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(D + O), Len);
     FString Out(Converter.Length(), Converter.Get());
     O += Len;
@@ -297,17 +302,24 @@ bool DeserializePoseFrame(const TArray<uint8>& Data, FCognitivePoseFrame& Out)
     ReadTraj(Out.FutureTrajectory);
 
     const int32 NCurves = ReadInt32(D, O);
-    for (int32 i = 0; i < NCurves; ++i)
+    // SEGURANÇA: limita contagem para evitar alocação excessiva / leitura fora.
+    if (NCurves > 0 && NCurves <= 4096)
     {
-        const FName Key(*ReadString(D, O));
-        const float Val = ReadFloat(D, O);
-        Out.CurveValues.Add(Key, Val);
+        for (int32 i = 0; i < NCurves && O < Data.Num(); ++i)
+        {
+            const FName Key(*ReadString(D, O, Data.Num()));
+            const float Val = ReadFloat(D, O);
+            Out.CurveValues.Add(Key, Val);
+        }
     }
 
     const int32 NTags = ReadInt32(D, O);
-    Out.Tags.SetNum(NTags);
-    for (int32 i = 0; i < NTags; ++i)
-        Out.Tags[i] = FName(*ReadString(D, O));
+    if (NTags > 0 && NTags <= 4096)
+    {
+        Out.Tags.SetNum(NTags);
+        for (int32 i = 0; i < NTags && O < Data.Num(); ++i)
+            Out.Tags[i] = FName(*ReadString(D, O, Data.Num()));
+    }
 
     Out.MovementMode = (ECognitiveMovementMode)ReadInt32(D, O);
     Out.MotionStyle  = (ECognitiveMotionStyle)ReadInt32(D, O);
@@ -512,6 +524,12 @@ TArray<uint8> SerializeTeach(const FTeachPayload& Payload)
         WriteInt32(P, A.TargetCategory);
         WriteString(P, A.Label);
     }
+
+    // Rótulos de demonstração do frame atual (emoção + ação que o líder
+    // está demonstrando). O parser Python lê estes dois inteiros após o
+    // vocabulário e usa para o aprendizado por demonstração.
+    WriteInt32(P, Payload.CurrentEmotion);
+    WriteInt32(P, Payload.CurrentAction);
 
     return BuildFrame(EMessageType::Teach, Payload.LeaderNPCId, P);
 }

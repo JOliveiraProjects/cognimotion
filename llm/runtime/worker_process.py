@@ -65,6 +65,7 @@ def inference_worker_process(
     from planning.action_executor import ActionExecutor
     from learning.policy_registry import PolicyRegistry
     from encoding.pose_encoder import PoseEncoder
+    from encoding.perception_features import augment_obs, PERCEPTION_DIM
 
     config   = DEFAULT_CONFIG
     wm_cfg   = config.world_model
@@ -77,7 +78,7 @@ def inference_worker_process(
     )
 
     world_model = WorldModel(
-        obs_enc_dim=config.encoder.embedding_dim,
+        obs_enc_dim=config.encoder.embedding_dim + PERCEPTION_DIM,
         action_dim=ac_cfg.action_dim,
         hidden_dim=wm_cfg.rssm_hidden_dim,
         num_categories=wm_cfg.rssm_num_categories,
@@ -145,6 +146,10 @@ def inference_worker_process(
                 raise ValueError("pose_frame ausente")
 
             obs_enc, conf = pose_encoder.encode_frame(pose_frame, device)
+            # Aumenta para a dim do modelo (256 + percepção). Este worker não
+            # recebe percepção pela fila, então usa vetor de percepção vazio
+            # (zeros) — mantém a dimensão consistente com o modelo de 276.
+            obs_enc = augment_obs(obs_enc, [])
             obs_t  = torch.from_numpy(obs_enc.astype(np.float32)).unsqueeze(0).to(device)
 
             h, z, last_action = get_state(req.session_id)

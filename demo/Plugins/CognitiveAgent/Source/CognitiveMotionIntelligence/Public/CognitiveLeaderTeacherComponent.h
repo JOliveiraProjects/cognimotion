@@ -14,6 +14,27 @@ class UCognitiveInferenceSubsystem;
 // fundamentar (ground) o que cada movimento/decisão É.
 // ─────────────────────────────────────────────────────────────────────────────
 UENUM(BlueprintType)
+// ─────────────────────────────────────────────────────────────────────────────
+// ECognitiveTeachEmotion
+// Emoção que o líder rotula durante a demonstração (SetCurrentEmotion). Os
+// valores DEVEM bater com EMOTION_NAMES no Python (binary_protocol.py) e com
+// EMOTIONS em demonstration_learning.py.
+// ─────────────────────────────────────────────────────────────────────────────
+UENUM(BlueprintType)
+enum class ECognitiveTeachEmotion : uint8
+{
+    Calm       = 0  UMETA(DisplayName = "Calm (calmo)"),
+    Happy      = 1  UMETA(DisplayName = "Happy (feliz)"),
+    Alert      = 2  UMETA(DisplayName = "Alert (alerta)"),
+    Fear       = 3  UMETA(DisplayName = "Fear (medo)"),
+    Anger      = 4  UMETA(DisplayName = "Anger (raiva)"),
+    Panic      = 5  UMETA(DisplayName = "Panic (pânico)"),
+    Confident  = 6  UMETA(DisplayName = "Confident (confiante)"),
+    Suspicious = 7  UMETA(DisplayName = "Suspicious (desconfiado)"),
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+UENUM(BlueprintType)
 enum class ECognitiveActionVerb : uint8
 {
     Idle     = 0  UMETA(DisplayName = "Idle (parado)"),
@@ -98,6 +119,22 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|Teach")
     ECognitiveActionVerb CurrentVerb = ECognitiveActionVerb::Idle;
 
+    // ── Demonstração de EMOÇÃO/AÇÃO (aprendizado por demonstração) ──────────────
+    // O líder rotula, durante a cena, o que está SENTINDO e a AÇÃO que toma.
+    // O NPC aprende a associação percepção→emoção→ação e generaliza.
+    // Defina por Blueprint: SetCurrentEmotion(Fear), SetCurrentTeachAction(5).
+    // bDemonstrating=false → não envia rótulo (o NPC usa o que já aprendeu).
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|Teach|Demo")
+    bool bDemonstrating = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|Teach|Demo")
+    ECognitiveTeachEmotion CurrentEmotion = ECognitiveTeachEmotion::Calm;
+
+    // Índice da ação demonstrada (0..8: idle/fwd/back/left/right/run/jump/crouch/stop).
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|Teach|Demo",
+              meta=(ClampMin="0", ClampMax="8"))
+    int32 CurrentTeachAction = 0;
+
     // Categoria semântica que o PRÓPRIO líder representa para os NPCs (em geral
     // Character/Friend — ele é o modelo a imitar). Usado pelo auto-tag do líder.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|Teach")
@@ -117,6 +154,27 @@ public:
     // ── Blueprint API ───────────────────────────────────────────────────────────
     UFUNCTION(BlueprintCallable, Category="Cognitive|Teach")
     void SetCurrentVerb(ECognitiveActionVerb NewVerb) { CurrentVerb = NewVerb; }
+
+    // Rotula a emoção que o líder está sentindo/demonstrando agora. Ativa o
+    // modo de demonstração (passa a enviar rótulos ao Python para aprendizado).
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teach|Demo")
+    void SetCurrentEmotion(ECognitiveTeachEmotion NewEmotion)
+    {
+        CurrentEmotion = NewEmotion;
+        bDemonstrating = true;
+    }
+
+    // Rotula a ação que o líder está tomando agora (0..8).
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teach|Demo")
+    void SetCurrentTeachAction(int32 ActionIndex)
+    {
+        CurrentTeachAction = ActionIndex;
+        bDemonstrating = true;
+    }
+
+    // Encerra a demonstração: o NPC passa a usar o que já aprendeu.
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teach|Demo")
+    void StopDemonstrating() { bDemonstrating = false; }
 
     UFUNCTION(BlueprintCallable, Category="Cognitive|Teach")
     int32 GetActionIndexForVerb(ECognitiveActionVerb Verb) const;

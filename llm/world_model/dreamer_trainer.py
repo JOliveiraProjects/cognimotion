@@ -25,7 +25,6 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from encoding.perception_features import PERCEPTION_DIM
 
 logger = logging.getLogger(__name__)
 
@@ -419,17 +418,14 @@ def dreamer_worker_process(
     from planning.policy import Policy
     from runtime.sequence_buffer import SequenceBuffer
     from learning.policy_registry import PolicyRegistry
+    from encoding.perception_features import PERCEPTION_DIM
 
     config = DEFAULT_CONFIG
     wm_cfg = config.world_model
     ac_cfg = config.actor_critic
 
-    base_obs_dim = config.encoder.embedding_dim
-    obs_enc_dim = base_obs_dim + PERCEPTION_DIM
-    print(f"[DREAMER] Usando obs_enc_dim = {obs_enc_dim} (base={base_obs_dim} + perception={PERCEPTION_DIM})")
-
     world_model = WorldModel(
-        obs_enc_dim=obs_enc_dim,
+        obs_enc_dim=config.encoder.embedding_dim + PERCEPTION_DIM,
         action_dim=ac_cfg.action_dim,
         hidden_dim=wm_cfg.rssm_hidden_dim,
         num_categories=wm_cfg.rssm_num_categories,
@@ -451,7 +447,7 @@ def dreamer_worker_process(
 
     seq_buf = SequenceBuffer(
         capacity=wm_cfg.sequence_buffer_capacity,
-        obs_dim=config.encoder.embedding_dim,
+        obs_dim=config.encoder.embedding_dim + PERCEPTION_DIM,
         action_dim=ac_cfg.action_dim,
         seq_len=wm_cfg.seq_len,
     )

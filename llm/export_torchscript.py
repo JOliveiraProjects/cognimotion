@@ -30,6 +30,7 @@ from typing import Tuple
 from config import DEFAULT_CONFIG
 from world_model.world_model import WorldModel
 from planning.policy import Policy
+from encoding.perception_features import PERCEPTION_DIM
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ def main():
 
     # Reconstrói os módulos com as mesmas dimensões do treino
     world_model = WorldModel(
-        obs_enc_dim=cfg.encoder.embedding_dim,
+        obs_enc_dim=cfg.encoder.embedding_dim + PERCEPTION_DIM,
         action_dim=ac_cfg.action_dim,
         hidden_dim=wm_cfg.rssm_hidden_dim,
         num_categories=wm_cfg.rssm_num_categories,

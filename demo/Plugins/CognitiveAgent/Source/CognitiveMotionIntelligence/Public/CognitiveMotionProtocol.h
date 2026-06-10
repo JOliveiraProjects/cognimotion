@@ -71,7 +71,7 @@ namespace CognitiveMotionProtocol
     FQuat         ReadQuat(const uint8* Data, int32& Offset);
     FTransform    ReadTransform(const uint8* Data, int32& Offset);
     TArray<float> ReadFloatArray(const uint8* Data, int32& Offset);
-    FString       ReadString(const uint8* Data, int32& Offset);
+    FString       ReadString(const uint8* Data, int32& Offset, int32 BufSize = -1);
 
     // ── Leader Sequence ───────────────────────────────────────────────────────
     // BC-03 context: líder e seguidor agora usam a mesma lista de bones nomeados.
@@ -126,6 +126,8 @@ namespace CognitiveMotionProtocol
         int32 CurrentVerb = 0;     // verbo demonstrado agora
         int32 LeaderCategory = 0;
         TArray<FTaughtActionWire> Vocabulary;
+        int32 CurrentEmotion = -1; // emoção rotulada agora (-1 = sem rótulo)
+        int32 CurrentAction  = -1; // ação rotulada agora (-1 = sem rótulo)
     };
 
     TArray<uint8> SerializeTeach(const FTeachPayload& Payload);

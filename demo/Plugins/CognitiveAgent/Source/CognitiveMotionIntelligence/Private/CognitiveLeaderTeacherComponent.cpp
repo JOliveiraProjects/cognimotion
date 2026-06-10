@@ -212,6 +212,19 @@ void UCognitiveLeaderTeacherComponent::SendVocabulary()
     Payload.CurrentVerb    = static_cast<int32>(CurrentVerb);
     Payload.LeaderCategory = static_cast<int32>(LeaderSelfCategory);
 
+    // Rótulos de demonstração: só envia se o líder está demonstrando agora.
+    // -1 sinaliza "sem rótulo" (o NPC usa o que já aprendeu).
+    if (bDemonstrating)
+    {
+        Payload.CurrentEmotion = static_cast<int32>(CurrentEmotion);
+        Payload.CurrentAction  = CurrentTeachAction;
+    }
+    else
+    {
+        Payload.CurrentEmotion = -1;
+        Payload.CurrentAction  = -1;
+    }
+
     for (const FCognitiveTaughtAction& A : ActionVocabulary)
     {
         CognitiveMotionProtocol::FTaughtActionWire W;

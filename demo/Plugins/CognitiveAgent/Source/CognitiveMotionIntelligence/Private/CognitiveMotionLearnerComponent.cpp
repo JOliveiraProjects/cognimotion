@@ -135,7 +135,7 @@ void UCognitiveMotionLearnerComponent::TickComponent(
                     GetOwner()->GetActorLocation(),
                     AnimInstance.IsValid() ? AnimInstance->GetRootVelocity() : FVector::ZeroVector,
                     GetOwner()->GetActorQuat(),
-                    (float)FPlatformTime::Seconds());
+                    FPlatformTime::Seconds());
                 if (!FutureTraj.IsValid())
                     FutureTraj = TrajectoryGenerator->GenerateFutureTrajectory(
                         GetOwner()->GetActorLocation(),

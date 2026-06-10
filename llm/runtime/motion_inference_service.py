@@ -280,6 +280,16 @@ class ClientSession:
         }
         self.current_verb = parsed.get("current_verb_name", "idle")
         self.service.update_vocabulary(self.session_id, parsed)
+
+        # APRENDIZADO POR DEMONSTRAÇÃO: se o líder está rotulando emoção+ação
+        # agora, registra a tripla (percepção atual, emoção, ação) para treino.
+        demo_emotion = parsed.get("current_emotion_name", "")
+        demo_action = parsed.get("current_action_index", -1)
+        if demo_emotion and demo_action is not None and int(demo_action) >= 0:
+            from encoding.perception_features import perception_features
+            pvec = perception_features(self.last_perception)
+            self.service.demo_learner.add_demonstration(
+                pvec, demo_emotion, int(demo_action))
         if not getattr(self, "_teach_logged", False):
             self._teach_logged = True
             verbs = ", ".join(v["verb_name"] for v in vocab)
@@ -327,6 +337,29 @@ class ClientSession:
             self.service.rl_inference,
             npc_id, obs_enc, req_dict,
         )
+
+        # ── APRENDIZADO POR DEMONSTRAÇÃO ──────────────────────────────────────
+        # Treina as cabeças periodicamente com o que o líder já demonstrou.
+        if (self.requests_processed % 10) == 0:
+            self.service.demo_learner.train_step(batch_size=64)
+
+        # Se o líder já ensinou o suficiente, o NPC usa o que APRENDEU
+        # (percepção→emoção→ação) e generaliza. Caso contrário, segue para a
+        # camada reativa (rede de segurança até haver aprendizado).
+        learned_emotion = None
+        if self.service.demo_learner.n_demonstrations() >= 64 and self.last_perception:
+            from encoding.perception_features import perception_features
+            pred = self.service.demo_learner.infer(
+                perception_features(self.last_perception))
+            learned_emotion = pred["emotion"]
+            # Só sobrepõe a ação se a confiança for alta (senão deixa a política).
+            if pred["action_conf"] >= 0.6:
+                action_idx = pred["action_idx"]
+                if (self.requests_processed % 30) == 0:
+                    logger.info(
+                        f"[{self.session_id}] APRENDIDO: emoção='{pred['emotion']}'"
+                        f"(conf={pred['emotion_conf']:.2f}) → ação={action_idx}"
+                        f"(conf={pred['action_conf']:.2f})")
 
         # 3. Controle de incerteza
         self.service.uncertainty_controller.update(
@@ -801,6 +834,11 @@ class MotionInferenceService:
         # reação a ameaça. Roda antes de aceitar a ação da política.
         self.reactive_layer = ReactiveDecisionLayer(ReactiveConfig())
 
+        # Aprendizado por demonstração: o líder rotula emoção+ação por Blueprint
+        # e este learner aprende percepção→emoção→ação (generaliza fora da demo).
+        from learning.demonstration_learning import DemonstrationLearner
+        self.demo_learner = DemonstrationLearner(device=str(cfg.device))
+
         # ── Per-NPC state manager ────────────────────────────────────────────
         npc_cfg = cfg.npc_session
         self.npc_session_manager = NPCSessionManager(
@@ -1219,7 +1257,7 @@ class MotionInferenceService:
             _ds_cfg = DatasetConfig(
                 scale=self.config.dataset.scale,
                 seed=self.config.dataset.seed,
-                obs_dim=self.config.encoder.embedding_dim,
+                obs_dim=self.config.encoder.embedding_dim + PERCEPTION_DIM,
                 action_dim=self.config.actor_critic.action_dim,
                 enable_weapons=self.config.dataset.enable_weapons,
                 enable_ball=self.config.dataset.enable_ball,
@@ -1230,7 +1268,8 @@ class MotionInferenceService:
             )
             _ds_reg = DatasetRegistry(_ds_cfg)
             _ds_reg.load_into_buffer_async(
-                self.sequence_buffer, obs_dim=self.config.encoder.embedding_dim
+                self.sequence_buffer,
+                obs_dim=self.config.encoder.embedding_dim + PERCEPTION_DIM
             )
             logger.info("DatasetRegistry | carregamento em background iniciado")
 

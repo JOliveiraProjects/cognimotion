@@ -19,19 +19,14 @@ void UCognitiveRuntimePoseMemory::Store(const FCognitiveGeneratedMotionFragment&
     FCognitiveGeneratedMotionFragment Copy = Fragment;
     Copy.GeneratedAt = FPlatformTime::Seconds();
 
-    // DEADLOCK FIX: PruneIfNeeded() chamada dentro de Write lock causava Sort() O(n log n)
-    // com lock adquirido, bloqueando todos os leitores. Corrigido usando double-check
-    // locking com blocos de escopo explícitos em vez de destrutor explícito (UB risk).
-    bool bNeedsPrune = false;
-    {
-        FRWScopeLock ReadLock(MemoryLock, SLT_ReadOnly);
-        bNeedsPrune = (Entries.Num() >= MaxCapacity);
-    }  // ReadLock liberado aqui
-
+    // Prune + Add acontecem ambos sob o MESMO write lock exclusivo. A condição
+    // de prune é avaliada DENTRO do lock (não fora), eliminando a janela de corrida
+    // em que dois threads liam Entries.Num() antes de qualquer um adquirir o write.
+    // O custo do Sort() em PruneIfNeeded só ocorre quando realmente cheio.
     {
         FRWScopeLock WriteLock(MemoryLock, SLT_Write);
-        if (bNeedsPrune && Entries.Num() >= MaxCapacity)
-            PruneIfNeeded();  // double-check: condição pode ter mudado
+        if (Entries.Num() >= MaxCapacity)
+            PruneIfNeeded();
         Entries.Add(MoveTemp(Copy));
     }
 }

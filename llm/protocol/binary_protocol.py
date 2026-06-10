@@ -596,6 +596,9 @@ ENTITY_CATEGORY_NAMES = {
 DISPOSITION_NAMES = {0: "neutral", 1: "friend", 2: "enemy", 3: "ally"}
 ROLE_NAMES = {0: "none", 1: "hostage", 2: "captor", 3: "civilian",
               4: "wounded", 5: "leader"}
+# Conjunto canônico de emoções (deve bater com EMOTIONS em demonstration_learning).
+EMOTION_NAMES = {0: "calm", 1: "happy", 2: "alert", 3: "fear", 4: "anger",
+                 5: "panic", 6: "confident", 7: "suspicious"}
 REACTION_NAMES = {
     0: "none", 1: "approach", 2: "attack", 3: "flee", 4: "hide",
     5: "pickup", 6: "enter", 7: "wait", 8: "cross",
@@ -688,10 +691,22 @@ def parse_teach(data: bytes) -> dict:
             "label": label,
         })
 
+    # Rótulos de demonstração (opcionais, retrocompatível): emoção e ação que
+    # o líder está demonstrando AGORA. Se os bytes não vierem (C++ antigo),
+    # ficam vazios e o aprendizado por demonstração simplesmente não dispara.
+    cur_emotion_idx = -1
+    cur_action_idx  = -1
+    if off + 8 <= len(data):
+        cur_emotion_idx = struct.unpack_from(">I", data, off)[0]; off += 4
+        a_raw = struct.unpack_from(">I", data, off)[0]; off += 4
+        cur_action_idx = a_raw - 0x100000000 if a_raw >= 0x80000000 else a_raw
+
     return {
         "leader_npc_id": leader_id,
         "current_verb": cur_verb,
         "current_verb_name": VERB_NAMES.get(cur_verb, "unknown"),
         "leader_category": leader_cat,
         "vocabulary": vocab,
+        "current_emotion_name": EMOTION_NAMES.get(cur_emotion_idx, ""),
+        "current_action_index": cur_action_idx,
     }

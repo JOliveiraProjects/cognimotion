@@ -54,7 +54,7 @@ public:
     FCognitiveTrajectory MakeIdleTrajectory() const;
 
     UFUNCTION(BlueprintCallable, Category = "Cognitive|Trajectory")
-    void RecordFrame(const FVector& Location, const FVector& Velocity, const FQuat& Facing, float Timestamp);
+    void RecordFrame(const FVector& Location, const FVector& Velocity, const FQuat& Facing, double Timestamp);
 
     UFUNCTION(BlueprintCallable, Category = "Cognitive|Trajectory")
     FCognitiveTrajectory GetRecordedPastTrajectory() const;
@@ -66,7 +66,7 @@ private:
     FVector SmoothVector(const FVector& Current, const FVector& Target, float Alpha) const;
     FQuat   SmoothRotation(const FQuat& Current, const FQuat& Target, float Alpha) const;
 
-    struct FHistoryFrame { FVector Location; FVector Velocity; FQuat Facing; float Time; };
+    struct FHistoryFrame { FVector Location; FVector Velocity; FQuat Facing; double Time; };
     TArray<FHistoryFrame> FrameHistory;
     static constexpr int32 MaxHistory = 128;
     // TECH DEBT FIX: mutable permite uso de FScopeLock em métodos const (GetRecordedPastTrajectory)

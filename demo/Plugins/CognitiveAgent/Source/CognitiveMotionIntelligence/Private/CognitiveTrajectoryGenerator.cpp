@@ -121,7 +121,7 @@ FCognitiveTrajectory UCognitiveTrajectoryGenerator::MakeIdleTrajectory() const
 }
 
 void UCognitiveTrajectoryGenerator::RecordFrame(
-    const FVector& Location, const FVector& Velocity, const FQuat& Facing, float Timestamp)
+    const FVector& Location, const FVector& Velocity, const FQuat& Facing, double Timestamp)
 {
     FScopeLock Lock(&HistoryLock);
     // TECH DEBT FIX: RemoveAt(0) em TArray é O(n) — desloca todos os elementos
@@ -150,7 +150,7 @@ FCognitiveTrajectory UCognitiveTrajectoryGenerator::GetRecordedPastTrajectory() 
     if (N == 0) return Traj;
 
     Traj.Samples.Reserve(N);
-    const float Now = (float)FPlatformTime::Seconds();
+    const double Now = FPlatformTime::Seconds();
 
     // TECH DEBT FIX: com ring buffer, os frames estão em ordem circular.
     // HistoryHead aponta para o próximo slot a escrever.
