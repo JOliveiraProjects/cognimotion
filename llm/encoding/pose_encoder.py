@@ -130,6 +130,15 @@ class PoseEncoder(nn.Module):
         obs = frame.to_observation_vector()
         if not np.isfinite(obs).all():
             obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # CACHE: NPCs parados/quase parados mandam frames idênticos. Rodar a rede
+        # a cada frame para cada NPC é gargalo. Cacheamos o último (hash do obs →
+        # embedding). Hit evita o forward inteiro. Quantiza para tolerar ruído ínfimo.
+        obs_key = hash(np.round(obs, 4).tobytes())
+        cached = getattr(self, "_enc_cache", None)
+        if cached is not None and cached[0] == obs_key:
+            return cached[1], cached[2]
+
         tensor = torch.from_numpy(obs.astype(np.float32)).unsqueeze(0).unsqueeze(0).to(device)
 
         root_dim = 3 + 4 + 3 + 3
@@ -140,5 +149,7 @@ class PoseEncoder(nn.Module):
 
         self.eval()
         embedding, confidence, _ = self.forward(root_t, bone_t)
-        return (embedding.squeeze(0).cpu().numpy().astype(np.float32),
-                float(np.clip(confidence.item(), 0.0, 1.0)))
+        emb_np = embedding.squeeze(0).cpu().numpy().astype(np.float32)
+        conf_val = float(np.clip(confidence.item(), 0.0, 1.0))
+        self._enc_cache = (obs_key, emb_np, conf_val)
+        return (emb_np, conf_val)

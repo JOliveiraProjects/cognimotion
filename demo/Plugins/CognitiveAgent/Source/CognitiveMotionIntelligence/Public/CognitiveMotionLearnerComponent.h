@@ -12,6 +12,7 @@ class UCognitivePoseRecorderComponent;
 class UCognitiveAnimInstance;
 class UCognitiveTrajectoryGenerator;
 class UCognitiveRuntimePoseMemory;
+class UCognitiveNativeInferenceComponent;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
@@ -124,6 +125,16 @@ private:
     void DeactivateFallback();
     void UpdateFallbackBlend(float DeltaTime);
     void EmitDebugDraw() const;
+
+    // Fallback OFFLINE: roda o modelo .pt nativo (LibTorch) quando o servidor
+    // Python não está disponível, para o NPC continuar funcionando sozinho.
+    // Retorna true se a inferência nativa rodou e aplicou bones neste frame.
+    bool TickNativeFallback(float DeltaTime);
+    UCognitiveNativeInferenceComponent* ResolveNativeInference();
+
+    // Componente de inferência nativa (.pt). Resolvido sob demanda do mesmo ator.
+    UPROPERTY()
+    TObjectPtr<UCognitiveNativeInferenceComponent> NativeInference;
 
     UPROPERTY()
     TObjectPtr<UCognitiveInferenceSubsystem> InferenceSubsystem;

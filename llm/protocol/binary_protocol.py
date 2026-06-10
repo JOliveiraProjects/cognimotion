@@ -66,6 +66,17 @@ def _parse_header(data: bytes) -> Optional[dict]:
         HEADER_FORMAT, data[:HEADER_SIZE])
     if magic != MAGIC_HEADER:
         return None
+    # Validação de checksum (não-destrutiva): se o header traz um checksum
+    # não-zero, compara com o CRC32 do payload recebido. Em divergência apenas
+    # registra aviso (não rejeita) — assim pacotes corrompidos ficam visíveis no
+    # log sem quebrar compatibilidade com clientes que enviam checksum=0.
+    if checksum != 0:
+        actual = _crc32(data[HEADER_SIZE:HEADER_SIZE + payload_size])
+        if actual != checksum:
+            import logging
+            logging.getLogger("binary_protocol").warning(
+                "checksum divergente (msg_type=0x%02x): header=%d payload=%d "
+                "— pacote possivelmente corrompido", msg_type, checksum, actual)
     return {
         "magic": magic, "version": version, "msg_type": msg_type,
         "flags": flags, "payload_size": payload_size,

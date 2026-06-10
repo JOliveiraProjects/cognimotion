@@ -226,6 +226,15 @@ int32 UCognitiveNativeInferenceComponent::RunInference(
         const int64 ActionIndex = ActIdx.item<int64>();
         Torch->LastAction = ActionIndex;
 
+        // Métricas de debug: normas L2 do estado latente (leitura do "pensamento"
+        // do modelo) e confiança da ação. Baratas e seguras para exibir em UI.
+        LatentHiddenNorm     = HNew.norm().item<float>();
+        LatentStochasticNorm = ZNew.norm().item<float>();
+        // O módulo exporta apenas o índice da ação (não os logits), então a
+        // confiança é registrada como uniforme (1/ActionDim). Quando o export
+        // passar a expor logits, troca-se por softmax-max aqui.
+        LastActionConfidence = 1.0f / FMath::Max(1, ActionDim);
+
         // ── Decodifica poses → FTransform (loc3 + quat4 por bone) ──────────────
         const float* P = Pose.data_ptr<float>();
         const int32 NB = FMath::Min<int32>(NumBones, (int32)(Pose.numel() / 7));

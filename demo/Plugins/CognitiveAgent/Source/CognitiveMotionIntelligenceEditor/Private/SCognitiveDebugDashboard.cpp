@@ -3,6 +3,7 @@
 #include "CognitiveDebugLog.h"
 #include "CognitiveNPCBoneDriver.h"
 #include "CognitiveMotionLearnerComponent.h"
+#include "CognitiveNativeInferenceComponent.h"
 #include "CognitiveLeaderObserverComponent.h"
 #include "CognitiveBehaviorTypes.h"
 
@@ -10,6 +11,7 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "Widgets/Notifications/SProgressBar.h"
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -285,6 +287,27 @@ TSharedRef<SWidget> SCognitiveDebugDashboard::BuildNPCCard(
     const float Confidence   = Learner ? Learner->GetResponseConfidence() : Driver->GetLastConfidence();
     const int32 LastAction   = Learner ? Learner->LastSelectedStyle : 0;
 
+    // Dados da inferência neural nativa (.pt), se o NPC tiver o componente.
+    // Mostram o que o modelo está "pensando": ação prevista, confiança e a
+    // magnitude do estado latente (h determinístico, z estocástico).
+    float NativeMs = 0.f, HiddenNorm = 0.f, StochNorm = 0.f, ActConf = 0.f;
+    int32 NativeAction = -1;
+    bool  bHasNative = false, bNativeLoaded = false;
+    if (OwnerActor)
+    {
+        if (UCognitiveNativeInferenceComponent* Native =
+                OwnerActor->FindComponentByClass<UCognitiveNativeInferenceComponent>())
+        {
+            bHasNative    = true;
+            bNativeLoaded = Native->IsModelLoaded();
+            NativeAction  = Native->LastActionIndex;
+            NativeMs      = Native->LastInferenceMs;
+            HiddenNorm    = Native->LatentHiddenNorm;
+            StochNorm     = Native->LatentStochasticNorm;
+            ActConf       = Native->LastActionConfidence;
+        }
+    }
+
     // Saúde dos dados
     const bool  bBonesOK   = BonesApplied > 0;
     const bool  bLatencyOK = Latency > 0.f && Latency < Driver->MaxLatencyMs;
@@ -379,6 +402,102 @@ TSharedRef<SWidget> SCognitiveDebugDashboard::BuildNPCCard(
                                   FText::FromString(ActionName(LastAction))) ]
                 ]
             ]
+
+            // Seção: Inferência Neural (.pt) — o que o modelo está "pensando".
+            // Só aparece se o NPC tem o componente Native Inference.
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(10.f, 0.f, 10.f, 8.f)
+            [
+                BuildNeuralSection(bHasNative, bNativeLoaded, NativeAction,
+                                   ActConf, HiddenNorm, StochNorm, NativeMs)
+            ]
+        ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Seção de inferência neural — mostra ação prevista, barra de confiança e a
+// magnitude do estado latente (h/z). Segue o design system do editor (Brushes,
+// fontes e cores nativas via FAppStyle).
+TSharedRef<SWidget> SCognitiveDebugDashboard::BuildNeuralSection(
+    bool bHasNative, bool bLoaded, int32 ActionIdx, float Confidence,
+    float HiddenNorm, float StochNorm, float InferenceMs) const
+{
+    if (!bHasNative)
+    {
+        return SNew(STextBlock)
+            .Text(LOCTEXT("NoNative", "Sem componente Native Inference (modo offline indisponível)"))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+            .Font(FAppStyle::GetFontStyle("SmallFont"));
+    }
+
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
+        .Padding(FMargin(10.f, 8.f))
+        [
+            SNew(SVerticalBox)
+
+            // Título da seção
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("NeuralTitle", "Inferência Neural (.pt)"))
+                    .Font(FAppStyle::GetFontStyle("BoldFont"))
+                ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(bLoaded ? LOCTEXT("PtLoaded", "● Modelo carregado")
+                                  : LOCTEXT("PtNotLoaded", "● .pt não carregado"))
+                    .ColorAndOpacity(HealthColor(bLoaded))
+                    .Font(FAppStyle::GetFontStyle("SmallFont"))
+                ]
+            ]
+
+            // Ação prevista
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+            [ MakeStatRow(LOCTEXT("PredAction", "Ação prevista"),
+                          FText::FromString(ActionName(ActionIdx))) ]
+
+            // Barra de confiança (visual)
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                .Padding(0.f, 0.f, 8.f, 0.f)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("ConfBar", "Confiança"))
+                    .MinDesiredWidth(120.f)
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                [
+                    SNew(SProgressBar)
+                    .Percent(FMath::Clamp(Confidence, 0.f, 1.f))
+                    .FillColorAndOpacity(HealthColor(Confidence > 0.5f, Confidence > 0.25f))
+                ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                .Padding(8.f, 0.f, 0.f, 0.f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(FString::Printf(TEXT("%.0f%%"), Confidence * 100.f)))
+                ]
+            ]
+
+            // Estado latente (normas h e z) — leitura compacta do "pensamento"
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+            [ MakeStatRow(LOCTEXT("LatentH", "Estado latente |h| (determinístico)"),
+                          FText::FromString(FString::Printf(TEXT("%.2f"), HiddenNorm))) ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+            [ MakeStatRow(LOCTEXT("LatentZ", "Estado latente |z| (estocástico)"),
+                          FText::FromString(FString::Printf(TEXT("%.2f"), StochNorm))) ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+            [ MakeStatRow(LOCTEXT("NativeMs", "Tempo de inferência (ms)"),
+                          FText::FromString(FString::Printf(TEXT("%.2f"), InferenceMs)),
+                          HealthColor(InferenceMs < 16.f, InferenceMs < 33.f)) ]
         ];
 }
 

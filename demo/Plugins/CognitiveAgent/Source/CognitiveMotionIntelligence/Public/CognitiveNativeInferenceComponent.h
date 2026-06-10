@@ -68,6 +68,20 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Cognitive|NativeInference|Debug")
     float LastInferenceMs = 0.f;
 
+    // Estado latente (read-only para debug): normas L2 de h (determinístico) e
+    // z (estocástico). Dão uma leitura compacta e barata do "pensamento" do
+    // modelo em tempo real, sem expor os tensores inteiros. Atualizados a cada
+    // RunInference. Aparecem no painel Details e no Debug Dashboard.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Cognitive|NativeInference|Debug")
+    float LatentHiddenNorm = 0.f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Cognitive|NativeInference|Debug")
+    float LatentStochasticNorm = 0.f;
+
+    // Confiança da última ação (softmax max), 0..1. Atualizada a cada inferência.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Cognitive|NativeInference|Debug")
+    float LastActionConfidence = 0.f;
+
     // ── API ───────────────────────────────────────────────────────────────────
     UFUNCTION(BlueprintCallable, Category="Cognitive|NativeInference")
     bool LoadModel();

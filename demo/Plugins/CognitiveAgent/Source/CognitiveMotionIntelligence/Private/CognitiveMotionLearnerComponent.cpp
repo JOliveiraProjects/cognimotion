@@ -6,6 +6,7 @@
 #include "CognitiveInferenceSubsystem.h"
 #include "CognitivePoseRecorderComponent.h"
 #include "CognitiveAnimInstance.h"
+#include "CognitiveNativeInferenceComponent.h"
 #include "GameFramework/Character.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -151,6 +152,13 @@ void UCognitiveMotionLearnerComponent::TickComponent(
         {
             ActivateFallback(TEXT("Inference not available"));
         }
+    }
+
+    // Enquanto o servidor estiver indisponível, roda a inferência nativa (.pt)
+    // a cada frame — o NPC continua se movendo sozinho, sem a rede.
+    if (bFallbackActive)
+    {
+        TickNativeFallback(DeltaTime);
     }
 
     EmitDebugDraw();
@@ -315,6 +323,52 @@ void UCognitiveMotionLearnerComponent::UpdateFallbackBlend(float DeltaTime)
     FallbackBlendAlpha = FMath::FInterpTo(FallbackBlendAlpha, Target, DeltaTime, FallbackBlendSpeed);
     if (AnimInstance.IsValid())
         AnimInstance->SetBlendWeight(FallbackBlendAlpha);
+}
+
+UCognitiveNativeInferenceComponent* UCognitiveMotionLearnerComponent::ResolveNativeInference()
+{
+    if (NativeInference) return NativeInference;
+    if (AActor* Owner = GetOwner())
+    {
+        NativeInference =
+            Owner->FindComponentByClass<UCognitiveNativeInferenceComponent>();
+    }
+    return NativeInference;
+}
+
+bool UCognitiveMotionLearnerComponent::TickNativeFallback(float DeltaTime)
+{
+    // Fallback OFFLINE: o servidor caiu (ou nunca conectou). Se houver um modelo
+    // .pt nativo carregado, o NPC continua se movendo sozinho via LibTorch —
+    // sem depender da rede. É o que torna o produto utilizável sem servidor.
+    UCognitiveNativeInferenceComponent* Native = ResolveNativeInference();
+    if (!Native)
+        return false;
+
+    // Tenta carregar o modelo uma vez, se ainda não estiver carregado.
+    if (!Native->IsModelLoaded())
+    {
+        if (!Native->LoadModel())
+            return false;  // sem .pt disponível — fallback nativo indisponível
+    }
+
+    // Monta a observação local (pose atual). Em modo offline o obs de percepção
+    // é opcional; passamos vazio e o modelo usa o caminho use_obs=false interno
+    // se preferir, mas aqui enviamos a pose codificada quando disponível.
+    TArray<float> ObsEnc;  // vazio → RunInference usa fallback interno (zeros)
+
+    TArray<FTransform> OutBones;
+    const int32 Action = Native->RunInference(ObsEnc, OutBones);
+    if (Action < 0)
+        return false;  // inferência falhou
+
+    // Aplica as poses geradas pelo .pt no esqueleto do NPC.
+    if (OutBones.Num() > 0 && AnimInstance.IsValid())
+    {
+        AnimInstance->SetBoneTransforms(OutBones);
+    }
+
+    return true;
 }
 
 void UCognitiveMotionLearnerComponent::SetMotionStyle(ECognitiveMotionStyle Style)

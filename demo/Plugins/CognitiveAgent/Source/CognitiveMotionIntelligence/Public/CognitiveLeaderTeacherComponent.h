@@ -13,7 +13,6 @@ class UCognitiveInferenceSubsystem;
 // Cada verbo recebe um significado (label) que é enviado ao Python para
 // fundamentar (ground) o que cada movimento/decisão É.
 // ─────────────────────────────────────────────────────────────────────────────
-UENUM(BlueprintType)
 // ─────────────────────────────────────────────────────────────────────────────
 // ECognitiveTeachEmotion
 // Emoção que o líder rotula durante a demonstração (SetCurrentEmotion). Os

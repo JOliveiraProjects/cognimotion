@@ -40,6 +40,11 @@ private:
     // Card builder por NPC
     TSharedRef<class SWidget> BuildNPCCard(UCognitiveNPCBoneDriver* Driver) const;
 
+    // Seção de inferência neural (.pt): ação prevista, confiança, estado latente.
+    TSharedRef<class SWidget> BuildNeuralSection(
+        bool bHasNative, bool bLoaded, int32 ActionIdx, float Confidence,
+        float HiddenNorm, float StochNorm, float InferenceMs) const;
+
     // Toggle de debug logs
     ECheckBoxState  IsDebugEnabled() const;
     void            OnDebugToggleChanged(ECheckBoxState NewState);
