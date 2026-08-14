@@ -33,6 +33,10 @@ MSG_AUTONOMOUS_REQUEST = 0x06
 MSG_MOTION_ACTION      = 0x07
 MSG_PERCEPTION         = 0x08
 MSG_TEACH              = 0x09
+MSG_TRAINING_REGISTER  = 0x0A   # Editor → PY: registra treino (tipo+reação+anim)
+MSG_TEACHING_SCENARIO  = 0x0B   # Editor → PY: cenário de ensino (pede decisão)
+MSG_TEACHING_CHOICE    = 0x0C   # PY → Editor: reação escolhida pelo agente
+MSG_TEACHING_FEEDBACK  = 0x0D   # Editor → PY: correção (certo/errado+sugestões)
 MSG_HANDSHAKE          = 0x10
 MSG_HANDSHAKE_ACK      = 0x11
 MSG_PING               = 0x20
@@ -721,3 +725,97 @@ def parse_teach(data: bytes) -> dict:
         "current_emotion_name": EMOTION_NAMES.get(cur_emotion_idx, ""),
         "current_action_index": cur_action_idx,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Treino & Ensino (Editor ⇄ Python) — tipos 0x0A..0x0D
+# Espelham CognitiveMotionProtocol.cpp (SerializeTrainingRegister/Scenario/
+# Feedback e DeserializeTeachingChoice) e a tela Cognitive Training Studio.
+#
+# Convenção de wire (idêntica ao C++):
+#   string = int32 BIG-endian (comprimento em bytes UTF-8) + bytes
+#   int32  = BIG-endian ; int64/float = little-endian nativo
+# ─────────────────────────────────────────────────────────────────────────────
+REACTION_NAME_TO_IDX = {v: k for k, v in REACTION_NAMES.items()}
+
+
+def _read_str(data: bytes, off: int) -> tuple:
+    n = struct.unpack_from(">i", data, off)[0]; off += 4
+    s = data[off:off + n].decode("utf-8", errors="replace"); off += n
+    return s, off
+
+
+def _write_str(buf: bytearray, s: str) -> None:
+    b = s.encode("utf-8")
+    buf += struct.pack(">i", len(b)); buf += b
+
+
+def parse_training_register(data: bytes) -> dict:
+    """MSG_TRAINING_REGISTER → {training_type, reaction, animation, notes}."""
+    if _parse_header(data) is None:
+        return {}
+    off = HEADER_SIZE
+    ttype, off = _read_str(data, off)
+    react, off = _read_str(data, off)
+    anim,  off = _read_str(data, off)
+    notes, off = _read_str(data, off)
+    return {"training_type": ttype, "reaction": react,
+            "animation": anim, "notes": notes}
+
+
+def parse_teaching_scenario(data: bytes) -> dict:
+    """MSG_TEACHING_SCENARIO → {scenario_id, training_type, description,
+    entities:[{kind,count,facing_me,distance_m}], candidates:[str]}."""
+    if _parse_header(data) is None:
+        return {}
+    off = HEADER_SIZE
+    scenario_id = struct.unpack_from("<q", data, off)[0]; off += 8
+    ttype, off = _read_str(data, off)
+    desc,  off = _read_str(data, off)
+    n_ent = struct.unpack_from(">i", data, off)[0]; off += 4
+    entities = []
+    for _ in range(n_ent):
+        kind, off = _read_str(data, off)
+        count   = struct.unpack_from(">i", data, off)[0]; off += 4
+        facing  = struct.unpack_from(">i", data, off)[0]; off += 4
+        dist    = struct.unpack_from("<f", data, off)[0]; off += 4
+        entities.append({"kind": kind, "count": count,
+                         "facing_me": facing, "distance_m": dist})
+    n_cand = struct.unpack_from(">i", data, off)[0]; off += 4
+    candidates = []
+    for _ in range(n_cand):
+        c, off = _read_str(data, off)
+        candidates.append(c)
+    return {"scenario_id": scenario_id, "training_type": ttype,
+            "description": desc, "entities": entities,
+            "candidates": candidates}
+
+
+def build_teaching_choice(scenario_id: int, chosen: str,
+                          confidence: float, rationale: str) -> bytes:
+    """MSG_TEACHING_CHOICE (PY → Editor). Pronto para writer.write()."""
+    p = bytearray()
+    p += struct.pack("<q", int(scenario_id))
+    _write_str(p, chosen)
+    p += struct.pack("<f", float(confidence))
+    _write_str(p, rationale)
+    return _build_frame(MSG_TEACHING_CHOICE, int(scenario_id), bytes(p))
+
+
+def parse_teaching_feedback(data: bytes) -> dict:
+    """MSG_TEACHING_FEEDBACK → {scenario_id, correct, chosen,
+    suggested:[str], comment}."""
+    if _parse_header(data) is None:
+        return {}
+    off = HEADER_SIZE
+    scenario_id = struct.unpack_from("<q", data, off)[0]; off += 8
+    correct     = struct.unpack_from(">i", data, off)[0]; off += 4
+    chosen, off = _read_str(data, off)
+    n_sug = struct.unpack_from(">i", data, off)[0]; off += 4
+    suggested = []
+    for _ in range(n_sug):
+        s, off = _read_str(data, off)
+        suggested.append(s)
+    comment, off = _read_str(data, off)
+    return {"scenario_id": scenario_id, "correct": bool(correct),
+            "chosen": chosen, "suggested": suggested, "comment": comment}

@@ -11,6 +11,7 @@ FCognitiveWorkerThread::FCognitiveWorkerThread(
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* InSendQueue,
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* InRecvQueue,
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* InFireAndForgetQueue,
+    TQueue<TArray<uint8>, EQueueMode::Mpsc>* InTeachingQueue,
     FThreadSafeCounter* InConnectionState,
     float InReconnectInterval)
     : Host(InHost)
@@ -19,6 +20,7 @@ FCognitiveWorkerThread::FCognitiveWorkerThread(
     , SendQueue(InSendQueue)
     , RecvQueue(InRecvQueue)
     , FireAndForgetQueue(InFireAndForgetQueue)
+    , TeachingQueue(InTeachingQueue)
     , ConnectionState(InConnectionState)
 {
     ReceiveBuffer.Reserve(65536);
@@ -211,7 +213,17 @@ uint32 FCognitiveWorkerThread::Run()
                 Disconnect();
                 continue;
             }
-            RecvQueue->Enqueue(MoveTemp(Incoming));
+            // Roteia por tipo: respostas de ensino vão para a fila dedicada,
+            // sem interferir no fluxo request/response do Learner (RecvQueue).
+            using namespace CognitiveMotionProtocol;
+            const bool bTeaching =
+                Incoming.Num() >= HeaderSize &&
+                reinterpret_cast<const FPacketHeader*>(Incoming.GetData())->MessageType
+                    == (uint8)EMessageType::TeachingChoice;
+            if (bTeaching && TeachingQueue)
+                TeachingQueue->Enqueue(MoveTemp(Incoming));
+            else
+                RecvQueue->Enqueue(MoveTemp(Incoming));
         }
         else
         {
@@ -265,6 +277,7 @@ void UCognitiveInferenceSubsystem::Connect(const FString& Host, int32 Port)
 
     WorkerRunnable = MakeUnique<FCognitiveWorkerThread>(
         Host, Port, &SendQueue, &RecvQueue, &FireAndForgetQueue,
+        &TeachingChoiceQueue,
         &ConnectionStateCounter, ReconnectIntervalSeconds);
 
     WorkerThread = TUniquePtr<FRunnableThread>(
@@ -417,4 +430,79 @@ bool UCognitiveInferenceSubsystem::TryGetBoneResponse(FCognitiveBoneResponse& Ou
     OutResponse.BoneTransforms  = Resp.BoneTransforms;
     OutResponse.bApplyRootMotion = false;
     return Resp.bValid && OutResponse.BoneTransforms.Num() > 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Treino & Ensino
+// ─────────────────────────────────────────────────────────────────────────────
+bool UCognitiveInferenceSubsystem::SendTrainingRegister(const FCognitiveTrainingEntry& Entry)
+{
+    if (!IsReady()) return false;
+    using namespace CognitiveMotionProtocol;
+
+    FTrainingRegisterWire W;
+    W.TrainingType  = Entry.TrainingType;
+    W.ReactionName  = Entry.ReactionName;
+    W.AnimationPath = Entry.AnimationPath;
+    W.Notes         = Entry.Notes;
+
+    SendRawMessage(SerializeTrainingRegister(W));
+    return true;
+}
+
+int64 UCognitiveInferenceSubsystem::SendTeachingScenario(const FCognitiveTeachingScenario& Scenario)
+{
+    if (!IsReady()) return 0;
+    using namespace CognitiveMotionProtocol;
+
+    FTeachingScenarioWire W;
+    W.ScenarioId   = NextScenarioId++;
+    W.TrainingType = Scenario.TrainingType;
+    W.Description  = Scenario.Description;
+    for (const FCognitiveScenarioEntity& E : Scenario.Entities)
+    {
+        FScenarioEntityWire EW;
+        EW.Kind = E.Kind; EW.Count = E.Count;
+        EW.FacingMe = E.FacingMe; EW.DistanceM = E.DistanceM;
+        W.Entities.Add(MoveTemp(EW));
+    }
+    W.CandidateReactions = Scenario.CandidateReactions;
+
+    // Vai pela SendQueue: o worker envia e aguarda UMA resposta (TeachingChoice),
+    // que o roteamento por tipo despacha para a TeachingChoiceQueue.
+    SendQueue.Enqueue(SerializeTeachingScenario(W));
+    return W.ScenarioId;
+}
+
+bool UCognitiveInferenceSubsystem::TryGetTeachingChoice(FCognitiveTeachingChoice& OutChoice)
+{
+    using namespace CognitiveMotionProtocol;
+
+    TArray<uint8> Data;
+    if (!TeachingChoiceQueue.Dequeue(Data)) return false;
+
+    FTeachingChoiceWire W;
+    if (!DeserializeTeachingChoice(Data, W)) return false;
+
+    OutChoice.ScenarioId     = W.ScenarioId;
+    OutChoice.ChosenReaction = W.ChosenReaction;
+    OutChoice.Confidence     = W.Confidence;
+    OutChoice.Rationale      = W.Rationale;
+    return true;
+}
+
+bool UCognitiveInferenceSubsystem::SendTeachingFeedback(const FCognitiveTeachingFeedback& Feedback)
+{
+    if (!IsReady()) return false;
+    using namespace CognitiveMotionProtocol;
+
+    FTeachingFeedbackWire W;
+    W.ScenarioId         = Feedback.ScenarioId;
+    W.bCorrect           = Feedback.bCorrect ? 1 : 0;
+    W.ChosenReaction     = Feedback.ChosenReaction;
+    W.SuggestedReactions = Feedback.SuggestedReactions;
+    W.Comment            = Feedback.Comment;
+
+    SendRawMessage(SerializeTeachingFeedback(W));
+    return true;
 }

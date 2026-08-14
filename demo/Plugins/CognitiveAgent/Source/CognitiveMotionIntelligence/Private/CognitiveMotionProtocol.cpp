@@ -534,5 +534,79 @@ TArray<uint8> SerializeTeach(const FTeachPayload& Payload)
     return BuildFrame(EMessageType::Teach, Payload.LeaderNPCId, P);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Treino & Ensino
+// ─────────────────────────────────────────────────────────────────────────────
+TArray<uint8> SerializeTrainingRegister(const FTrainingRegisterWire& W)
+{
+    TArray<uint8> P;
+    P.Reserve(128);
+    WriteString(P, W.TrainingType);
+    WriteString(P, W.ReactionName);
+    WriteString(P, W.AnimationPath);
+    WriteString(P, W.Notes);
+    return BuildFrame(EMessageType::TrainingRegister, 0, P);
+}
+
+TArray<uint8> SerializeTeachingScenario(const FTeachingScenarioWire& W)
+{
+    TArray<uint8> P;
+    P.Reserve(256 + W.Entities.Num() * 32 + W.CandidateReactions.Num() * 32);
+
+    WriteInt64(P, W.ScenarioId);
+    WriteString(P, W.TrainingType);
+    WriteString(P, W.Description);
+
+    WriteInt32(P, W.Entities.Num());
+    for (const FScenarioEntityWire& E : W.Entities)
+    {
+        WriteString(P, E.Kind);
+        WriteInt32(P, E.Count);
+        WriteInt32(P, E.FacingMe);
+        WriteFloat(P, E.DistanceM);
+    }
+
+    WriteInt32(P, W.CandidateReactions.Num());
+    for (const FString& R : W.CandidateReactions)
+        WriteString(P, R);
+
+    return BuildFrame(EMessageType::TeachingScenario, W.ScenarioId, P);
+}
+
+bool DeserializeTeachingChoice(const TArray<uint8>& Data, FTeachingChoiceWire& Out)
+{
+    if (Data.Num() < HeaderSize) return false;
+
+    const FPacketHeader* Hdr = reinterpret_cast<const FPacketHeader*>(Data.GetData());
+    if (Hdr->Magic != MagicHeader) return false;
+    if ((EMessageType)Hdr->MessageType != EMessageType::TeachingChoice) return false;
+
+    int32 O = HeaderSize;
+    const uint8* D = Data.GetData();
+
+    Out.ScenarioId     = ReadInt64(D, O);
+    Out.ChosenReaction = ReadString(D, O, Data.Num());
+    Out.Confidence     = ReadFloat(D, O);
+    Out.Rationale      = ReadString(D, O, Data.Num());
+    return true;
+}
+
+TArray<uint8> SerializeTeachingFeedback(const FTeachingFeedbackWire& W)
+{
+    TArray<uint8> P;
+    P.Reserve(128 + W.SuggestedReactions.Num() * 32);
+
+    WriteInt64(P, W.ScenarioId);
+    WriteInt32(P, W.bCorrect);
+    WriteString(P, W.ChosenReaction);
+
+    WriteInt32(P, W.SuggestedReactions.Num());
+    for (const FString& R : W.SuggestedReactions)
+        WriteString(P, R);
+
+    WriteString(P, W.Comment);
+    return BuildFrame(EMessageType::TeachingFeedback, W.ScenarioId, P);
+}
+
 
 }

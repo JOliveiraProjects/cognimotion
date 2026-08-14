@@ -64,6 +64,9 @@ def export(output_path, wm, policy, num_bones):
         rssm=wm.rssm, actor=policy.actor,
         pose_decoder=wm.pose_decoder, num_bones=num_bones)
     module.eval()
+    # Liga argmax determinístico no RSSM: torch.multinomial crasha sob LibTorch
+    # no Unreal (RNG global não inicializado → access violation/fastfail).
+    wm.rssm.deterministic_sampling = True
     scripted = torch.jit.script(module)
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     scripted.save(output_path)

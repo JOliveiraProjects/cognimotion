@@ -6,13 +6,14 @@ public class CognitiveMotionIntelligence : ModuleRules
 {
     public CognitiveMotionIntelligence(ReadOnlyTargetRules Target) : base(Target)
     {
-        // IMPORTANTE: NÃO usar PCH compartilhado. O PCH compartilhado (com RTTI)
-        // arrasta os headers da LibTorch para outros módulos (ex.: o módulo de
-        // jogo CMI), que não têm as macros C10_USE_GFLAGS=0 — causando o erro
-        // 'Cannot open include file: gflags/gflags.h' ao linkar esses módulos.
-        // Com PCH próprio, a LibTorch fica isolada neste módulo.
-        PCHUsage = ModuleRules.PCHUsageMode.NoSharedPCHs;
-        PrivatePCHHeaderFile = "Private/CognitiveMotionIntelligencePCH.h";
+        // A LibTorch NÃO é mais linkada neste módulo. A inferência roda num
+        // processo separado (cmi_worker.exe) que comunica por named pipe. Isso
+        // elimina o conflito de heap (0xC0000374) entre o Mimalloc do Unreal e
+        // o alocador da LibTorch, que derrubava o editor no primeiro forward.
+        // Com a torch fora do processo do UE, este módulo volta a ser um módulo
+        // UE comum (PCH compartilhado OK, sem RTTI/exceptions especiais).
+        PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "InputCore",
             "AnimGraphRuntime", "GameplayTags",
@@ -20,22 +21,8 @@ public class CognitiveMotionIntelligence : ModuleRules
         });
         PrivateDependencyModuleNames.AddRange(new string[] {
             "AnimationCore", "SkeletalMeshDescription",
-            "Projects"   // IPluginManager — localizar o modelo em Content/Models
+            "Projects",   // IPluginManager — localizar o modelo e o worker
+            "NavigationSystem", "AIModule"   // NavMesh + SimpleMoveToLocation
         });
-
-        // LibTorch — inferência nativa (sem rede, sem Python). Se a lib não
-        // estiver instalada, o módulo compila com WITH_LIBTORCH=0 e o plugin
-        // usa o caminho TCP/Python como fallback.
-        PrivateDependencyModuleNames.Add("LibTorch");
-
-        // Este módulo INCLUI os headers da LibTorch (torch/script.h) quando ela
-        // está presente. RTTI e exceptions são necessários. As macros gflags/glog
-        // NÃO são definidas aqui de propósito: o c10/util/Flags.h usa #ifdef
-        // (testa existência, não valor), então defini-las como 0 RELIGA o include
-        // de <gflags/gflags.h> e quebra o build. Ausência = desligado.
-        bUseRTTI = true;
-        bEnableExceptions = true;
-        PublicDefinitions.Add("NOMINMAX");
-        PublicDefinitions.Add("_CRT_SECURE_NO_WARNINGS=1");
     }
 }

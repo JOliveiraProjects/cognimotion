@@ -20,6 +20,10 @@ namespace CognitiveMotionProtocol
         MotionAction      = 0x07,   // movido de static constexpr
         Perception        = 0x08,   // NPC → Python: entidades percebidas
         Teach             = 0x09,   // Líder → Python: vocabulário de ações
+        TrainingRegister  = 0x0A,   // Editor → Python: registra treino (tipo+reação+anim)
+        TeachingScenario  = 0x0B,   // Editor → Python: cenário de ensino (pede decisão)
+        TeachingChoice    = 0x0C,   // Python → Editor: reação escolhida pelo agente
+        TeachingFeedback  = 0x0D,   // Editor → Python: correção (certo/errado+sugestões)
         Handshake         = 0x10,
         HandshakeAck      = 0x11,
         Ping              = 0x20,
@@ -131,5 +135,55 @@ namespace CognitiveMotionProtocol
     };
 
     TArray<uint8> SerializeTeach(const FTeachPayload& Payload);
+
+    // ── Treino & Ensino (Editor ⇄ Python) ─────────────────────────────────────
+    // TrainingRegister: registra uma demonstração rotulada no catálogo Python.
+    struct FTrainingRegisterWire
+    {
+        FString TrainingType;    // ex: "combate"
+        FString ReactionName;    // ex: "agachar com arma"
+        FString AnimationPath;   // ex: /Game/Anims/X.X
+        FString Notes;
+    };
+    TArray<uint8> SerializeTrainingRegister(const FTrainingRegisterWire& W);
+
+    // TeachingScenario: cenário + reações candidatas; Python responde TeachingChoice.
+    struct FScenarioEntityWire
+    {
+        FString Kind;            // "enemy", "ally", "object", "danger", ...
+        int32   Count    = 0;
+        int32   FacingMe = 0;
+        float   DistanceM = 0.f;
+    };
+    struct FTeachingScenarioWire
+    {
+        int64   ScenarioId = 0;
+        FString TrainingType;
+        FString Description;
+        TArray<FScenarioEntityWire> Entities;
+        TArray<FString> CandidateReactions;  // vazio = todas do tipo
+    };
+    TArray<uint8> SerializeTeachingScenario(const FTeachingScenarioWire& W);
+
+    // TeachingChoice (Python → UE): escolha do agente para um cenário.
+    struct FTeachingChoiceWire
+    {
+        int64   ScenarioId = 0;
+        FString ChosenReaction;
+        float   Confidence = 0.f;
+        FString Rationale;
+    };
+    bool DeserializeTeachingChoice(const TArray<uint8>& Data, FTeachingChoiceWire& Out);
+
+    // TeachingFeedback: correção do professor sobre a escolha.
+    struct FTeachingFeedbackWire
+    {
+        int64   ScenarioId = 0;
+        int32   bCorrect   = 0;
+        FString ChosenReaction;
+        TArray<FString> SuggestedReactions;
+        FString Comment;
+    };
+    TArray<uint8> SerializeTeachingFeedback(const FTeachingFeedbackWire& W);
 }
 

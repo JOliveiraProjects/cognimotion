@@ -64,15 +64,32 @@ public class LibTorch : ModuleRules
             // (erro LNK1194). Sem delay-load, o Windows carrega as DLLs no
             // startup — que é o comportamento correto aqui, pois elas estão
             // ao lado do binário.
+            //
+            // CRÍTICO (HEAP CORRUPTION 0xC0000374): a LibTorch shared para Windows
+            // pode trazer 'mimalloc.dll' / 'mimalloc-redirect.dll', que redirecionam
+            // malloc/free GLOBALMENTE. O Unreal TAMBÉM usa Mimalloc. Os dois
+            // redirecionadores colidem: um tensor alocado pelo mimalloc da LibTorch
+            // é liberado pelo alocador do UE (ou vice-versa) e a heap detecta o
+            // ponteiro estrangeiro → STATUS_HEAP_CORRUPTION no forward (crash que
+            // só aparece em Development/Shipping, não em Debug). Por isso NÃO
+            // copiamos as DLLs de mimalloc: sem elas, a LibTorch usa o malloc do
+            // CRT e não há redirecionamento conflitante.
+            string[] AllocatorBlocklist = { "mimalloc.dll", "mimalloc-redirect.dll", "mimalloc-override.dll" };
             foreach (string Dll in Directory.GetFiles(LibPath, "*.dll"))
             {
                 string DllName = Path.GetFileName(Dll);
+                if (Array.Exists(AllocatorBlocklist, b => string.Equals(b, DllName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Console.WriteLine("[CognitiveAgent] Pulando DLL de alocador (evita heap corruption com UE Mimalloc): " + DllName);
+                    continue;
+                }
                 RuntimeDependencies.Add(Path.Combine("$(BinaryOutputDir)", DllName), Dll);
             }
 
             // CRÍTICO: resolve o conflito "inconsistent dll linkage" entre LibTorch
             // e UE relatado nos fóruns. Estas definições alinham o modo de linkagem.
-            PublicDefinitions.Add("NOMINMAX");                 // evita conflito min/max do Windows.h
+            // NOMINMAX NÃO é redefinido aqui — o UE (MinWindows.h) já o define, e
+            // redefinir gera C4005. _CRT_SECURE_NO_WARNINGS basta.
             PublicDefinitions.Add("_CRT_SECURE_NO_WARNINGS=1");
 
             // ATENÇÃO — CAUSA RAIZ DO ERRO 'gflags/gflags.h not found':

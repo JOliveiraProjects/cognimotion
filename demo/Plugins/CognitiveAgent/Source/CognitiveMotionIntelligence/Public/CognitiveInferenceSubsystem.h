@@ -7,6 +7,7 @@
 #include "HAL/RunnableThread.h"
 #include "Sockets.h"
 #include "CognitiveBoneTypes.h"
+#include "CognitiveTrainingTypes.h"
 #include "SocketSubsystem.h"
 #include "Containers/Queue.h"
 #include "CognitiveMotionTypes.h"
@@ -33,6 +34,7 @@ public:
         TQueue<TArray<uint8>, EQueueMode::Mpsc>* InSendQueue,
         TQueue<TArray<uint8>, EQueueMode::Mpsc>* InRecvQueue,
         TQueue<TArray<uint8>, EQueueMode::Mpsc>* InFireAndForgetQueue,  // BA-02 fix
+        TQueue<TArray<uint8>, EQueueMode::Mpsc>* InTeachingQueue,       // ensino: TeachingChoice
         FThreadSafeCounter* InConnectionState,
         float InReconnectInterval);
 
@@ -56,6 +58,7 @@ private:
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* SendQueue;
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* RecvQueue;
     TQueue<TArray<uint8>, EQueueMode::Mpsc>* FireAndForgetQueue;  // BA-02 fix
+    TQueue<TArray<uint8>, EQueueMode::Mpsc>* TeachingQueue;       // respostas TeachingChoice
     FThreadSafeCounter* ConnectionState;
 
     FSocket* Socket = nullptr;
@@ -99,6 +102,26 @@ public:
     // Tenta retirar resposta de bone transforms da RecvQueue
     bool TryGetBoneResponse(FCognitiveBoneResponse& OutResponse);
 
+    // ── Treino & Ensino (usado pela tela Cognitive Training Studio) ───────────
+    // Registra um treino no catálogo Python (fire-and-forget).
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Training")
+    bool SendTrainingRegister(const FCognitiveTrainingEntry& Entry);
+
+
+    // Envia um cenário de ensino; o Python responde com TeachingChoice
+    // (recuperada via TryGetTeachingChoice). Retorna o ScenarioId gerado,
+    // ou 0 se não conectado.
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teaching")
+    int64 SendTeachingScenario(const FCognitiveTeachingScenario& Scenario);
+
+    // Tenta retirar a escolha do agente da fila dedicada de ensino.
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teaching")
+    bool TryGetTeachingChoice(FCognitiveTeachingChoice& OutChoice);
+
+    // Envia a correção do professor (fire-and-forget).
+    UFUNCTION(BlueprintCallable, Category="Cognitive|Teaching")
+    bool SendTeachingFeedback(const FCognitiveTeachingFeedback& Feedback);
+
     UFUNCTION(BlueprintPure, Category = "Cognitive|Inference")
     ECognitiveInferenceState GetConnectionState() const;
 
@@ -136,6 +159,8 @@ private:
     // O worker drena esta fila sem entrar no loop ReceiveFrame, evitando que
     // PendingRequestCount fique negativo.
     TQueue<TArray<uint8>, EQueueMode::Mpsc> FireAndForgetQueue;
+    TQueue<TArray<uint8>, EQueueMode::Mpsc> TeachingChoiceQueue;   // respostas TeachingChoice (0x0C)
+    int64 NextScenarioId = 1;
 
     FThreadSafeCounter ConnectionStateCounter{(int32)ECognitiveInferenceState::Disconnected};
 

@@ -110,6 +110,13 @@ class RSSM(nn.Module):
         self.kl_balance     = kl_balance
         self.unimix         = unimix
 
+        # Quando True, _sample_with_unimix usa argmax determinístico em vez de
+        # torch.multinomial. multinomial depende do gerador global de RNG do
+        # torch, que NÃO é inicializado quando o .pt roda via LibTorch embarcada
+        # no Unreal — causando access violation/fastfail no forward. Para
+        # inferência (export) ligamos esta flag; o treino mantém False (amostra).
+        self.deterministic_sampling = False
+
         gru_input_dim = self.stochastic_dim + action_dim
 
         if use_block_gru:
@@ -228,7 +235,12 @@ class RSSM(nn.Module):
         # amostragem por CDF inversa, equivalente a Categorical.sample().
         flat_probs = probs_r.reshape(B * self.num_categories, self.category_dim)
         flat_probs = flat_probs / (flat_probs.sum(dim=-1, keepdim=True) + 1e-8)
-        samples_flat = torch.multinomial(flat_probs, num_samples=1).squeeze(-1)
+        if self.deterministic_sampling:
+            # Inferência: argmax (sem RNG). Evita o crash do torch.multinomial
+            # sob LibTorch no Unreal (gerador global de RNG não inicializado).
+            samples_flat = torch.argmax(flat_probs, dim=-1)
+        else:
+            samples_flat = torch.multinomial(flat_probs, num_samples=1).squeeze(-1)
         samples  = samples_flat.view(B, self.num_categories)            # (B, num_cat)
         one_hot  = F.one_hot(samples, self.category_dim).float()        # (B, num_cat, cat_dim)
         oh_flat  = one_hot.view(B, -1)                                  # (B, stoch_dim)

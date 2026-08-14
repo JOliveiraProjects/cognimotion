@@ -3,38 +3,28 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformTime.h"
+#include "HAL/PlatformMisc.h"
+#include "Components/SkeletalMeshComponent.h"
 
-// LibTorch só é incluída se instalada (WITH_LIBTORCH=1 vindo do Build.cs).
-// IMPORTANTE: o c10/util/Flags.h usa `#ifdef C10_USE_GFLAGS` para decidir se
-// inclui <gflags/gflags.h>. Como o teste é por existência (não por valor),
-// garantimos aqui que a macro NÃO exista antes de puxar o torch — senão o
-// build falha com 'Cannot open include file: gflags/gflags.h'.
-#ifdef C10_USE_GFLAGS
-  #undef C10_USE_GFLAGS
-#endif
-#ifdef C10_USE_GLOG
-  #undef C10_USE_GLOG
-#endif
-#if WITH_LIBTORCH
-THIRD_PARTY_INCLUDES_START
-#include <torch/script.h>
-#include <torch/torch.h>
-THIRD_PARTY_INCLUDES_END
-#endif
+// Inferência isolada: a LibTorch roda num PROCESSO SEPARADO (cmi_worker.exe),
+// comunicando por named pipe. Nada de torch dentro do processo do Unreal —
+// elimina o conflito de heap (0xC0000374) entre Mimalloc do UE e o alocador
+// da LibTorch. O cliente do pipe encapsula spawn do worker + protocolo.
+#include "CMIWorkerClient.h"
+
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Estado opaco LibTorch (mantido fora do header)
+// Estado interno: cliente do worker isolado + estado recorrente (h,z) mantido
+// no UE como arrays simples (a fonte da verdade fica aqui; o worker é stateless
+// por frame). Nada de tipos LibTorch.
 // ─────────────────────────────────────────────────────────────────────────────
 struct UCognitiveNativeInferenceComponent::FTorchState
 {
-#if WITH_LIBTORCH
-    torch::jit::script::Module Module;
-    torch::Device Device = torch::kCPU;
-    torch::Tensor H;   // (1, hidden_dim)
-    torch::Tensor Z;   // (1, stochastic_dim)
-    int64 LastAction = 0;
+    FCMIWorkerClient Worker;
+    TArray<float> H;          // (hidden_dim)
+    TArray<float> Z;          // (stochastic_dim)
+    int32 LastAction = 0;
     bool bReady = false;
-#endif
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,17 +55,29 @@ UCognitiveNativeInferenceComponent::~UCognitiveNativeInferenceComponent()
 void UCognitiveNativeInferenceComponent::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Logs de rastreamento com flush imediato: se o editor fechar, a ÚLTIMA
+    // linha escrita no log diz exatamente onde parou. UE_LOG vai sempre ao
+    // arquivo (não depende de toggle de debug).
+    UE_LOG(LogTemp, Warning, TEXT("[NativeInfer][TRACE] BeginPlay INICIO"));
+    GLog->Flush();
+
     LoadModel();
+
+    UE_LOG(LogTemp, Warning, TEXT("[NativeInfer][TRACE] BeginPlay FIM (bModelLoaded=%d)"),
+           bModelLoaded ? 1 : 0);
+    GLog->Flush();
 }
 
 void UCognitiveNativeInferenceComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     Super::EndPlay(EndPlayReason);
-    // O estado é liberado no destrutor. Aqui apenas marcamos como não-pronto
-    // para impedir uso após o fim do play.
-#if WITH_LIBTORCH
-    if (Torch) { Torch->bReady = false; }
-#endif
+    // Encerra o worker (fecha o pipe → o processo sai sozinho).
+    if (Torch)
+    {
+        Torch->Worker.Stop();
+        Torch->bReady = false;
+    }
     bModelLoaded = false;
 }
 
@@ -100,7 +102,6 @@ FString UCognitiveNativeInferenceComponent::ResolveModelPath() const
 // ─────────────────────────────────────────────────────────────────────────────
 bool UCognitiveNativeInferenceComponent::LoadModel()
 {
-#if WITH_LIBTORCH
     if (!Torch) { bModelLoaded = false; return false; }
 
     const FString Path = ResolveModelPath();
@@ -111,39 +112,36 @@ bool UCognitiveNativeInferenceComponent::LoadModel()
         return false;
     }
 
-    try
+    UE_LOG(LogTemp, Warning, TEXT("[NativeInfer][TRACE] modelo achado: %s"), *Path);
+    GLog->Flush();
+
+    // Spawna o worker isolado e conecta. A LibTorch carrega o .pt DENTRO do
+    // worker (outro processo) — nada de torch aqui. Se o worker não subir ou o
+    // modelo não carregar lá, caímos no fallback (TCP/Python ou Learner).
+    const bool bOk = Torch->Worker.Start(Path, HiddenDim, StochasticDim, ActionDim, ObsDim);
+
+    UE_LOG(LogTemp, Warning, TEXT("[NativeInfer][TRACE] worker start (ok=%d)"), bOk ? 1 : 0);
+    GLog->Flush();
+
+    if (!bOk)
     {
-        Torch->Device = (bUseGPU && torch::cuda::is_available())
-                        ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
-
-        Torch->Module = torch::jit::load(TCHAR_TO_UTF8(*Path), Torch->Device);
-        Torch->Module.eval();
-
-        // Inicializa estado recorrente zerado
-        Torch->H = torch::zeros({1, HiddenDim},     Torch->Device);
-        Torch->Z = torch::zeros({1, StochasticDim}, Torch->Device);
-        Torch->LastAction = 0;
-        Torch->bReady = true;
-
-        bModelLoaded = true;
-        CMI_DBG("[NativeInfer] modelo carregado: %s | device=%s",
-                *Path, (Torch->Device.is_cuda() ? TEXT("CUDA") : TEXT("CPU")));
-        return true;
-    }
-    catch (const c10::Error& e)
-    {
-        CMI_DBG("[NativeInfer] ERRO ao carregar modelo: %s", UTF8_TO_TCHAR(e.what()));
+        CMI_DBG("[NativeInfer] worker de inferência não disponível — nativo desativado.");
         bModelLoaded = false;
+        Torch->bReady = false;
         return false;
     }
-#else
-    CMI_DBG("[NativeInfer] LibTorch não compilada (WITH_LIBTORCH=0).");
-    bModelLoaded = false;
-    return false;
-#endif
+
+    // Estado recorrente (h,z) inicia zerado, mantido aqui no UE.
+    Torch->H.Init(0.0f, HiddenDim);
+    Torch->Z.Init(0.0f, StochasticDim);
+    Torch->LastAction = 0;
+    Torch->bReady = true;
+    bModelLoaded = true;
+
+    CMI_DBG("[NativeInfer] modelo carregado no worker isolado: %s", *Path);
+    return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 bool UCognitiveNativeInferenceComponent::LoadModelFromFile(const FString& FilePath)
 {
     if (FilePath.IsEmpty() || !FPaths::FileExists(FilePath))
@@ -160,14 +158,12 @@ bool UCognitiveNativeInferenceComponent::LoadModelFromFile(const FString& FilePa
 
 void UCognitiveNativeInferenceComponent::ResetState()
 {
-#if WITH_LIBTORCH
     if (Torch && Torch->bReady)
     {
-        Torch->H = torch::zeros({1, HiddenDim},     Torch->Device);
-        Torch->Z = torch::zeros({1, StochasticDim}, Torch->Device);
+        Torch->H.Init(0.0f, HiddenDim);
+        Torch->Z.Init(0.0f, StochasticDim);
         Torch->LastAction = 0;
     }
-#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,92 +172,132 @@ int32 UCognitiveNativeInferenceComponent::RunInference(
 {
     OutBones.Reset();
 
-#if WITH_LIBTORCH
-    if (!bModelLoaded || !Torch || !Torch->bReady)
+    if (!bModelLoaded || !Torch || !Torch->bReady || !Torch->Worker.IsRunning())
         return -1;
 
     const double T0 = FPlatformTime::Seconds();
 
-    try
+    // ── Monta a ação anterior como one-hot ───────────────────────────────────
+    TArray<float> Action;
+    Action.Init(0.0f, ActionDim);
+    const int32 PrevA = FMath::Clamp<int32>(Torch->LastAction, 0, ActionDim - 1);
+    Action[PrevA] = 1.0f;
+
+    // ── Observação (ou zeros quando não há obs do servidor) ───────────────────
+    const bool bUseObs = ObsEnc.Num() > 0;
+    TArray<float> Obs;
+    if (bUseObs && ObsEnc.Num() == ObsDim)
     {
-        torch::NoGradGuard NoGrad;
-
-        // ── Monta entradas ────────────────────────────────────────────────────
-        // Ação anterior como one-hot
-        torch::Tensor Action = torch::zeros({1, ActionDim}, Torch->Device);
-        const int64 PrevA = FMath::Clamp<int64>(Torch->LastAction, 0, ActionDim - 1);
-        Action[0][PrevA] = 1.0f;
-
-        const bool bUseObs = ObsEnc.Num() > 0;
-        torch::Tensor Obs;
-        if (bUseObs)
-        {
-            Obs = torch::from_blob(
-                const_cast<float*>(ObsEnc.GetData()),
-                {1, ObsEnc.Num()}, torch::kFloat32).clone().to(Torch->Device);
-        }
-        else
-        {
-            Obs = torch::zeros({1, 256}, Torch->Device);
-        }
-
-        // ── Forward: (h, z, action, obs, use_obs) → (h', z', action_idx, pose) ──
-        std::vector<torch::jit::IValue> Inputs;
-        Inputs.push_back(Torch->H);
-        Inputs.push_back(Torch->Z);
-        Inputs.push_back(Action);
-        Inputs.push_back(Obs);
-        Inputs.push_back(bUseObs);
-
-        auto Output = Torch->Module.forward(Inputs).toTuple();
-
-        torch::Tensor HNew = Output->elements()[0].toTensor();
-        torch::Tensor ZNew = Output->elements()[1].toTensor();
-        torch::Tensor ActIdx = Output->elements()[2].toTensor();
-        torch::Tensor Pose = Output->elements()[3].toTensor().to(torch::kCPU).contiguous();
-
-        // Atualiza estado recorrente
-        Torch->H = HNew;
-        Torch->Z = ZNew;
-        const int64 ActionIndex = ActIdx.item<int64>();
-        Torch->LastAction = ActionIndex;
-
-        // Métricas de debug: normas L2 do estado latente (leitura do "pensamento"
-        // do modelo) e confiança da ação. Baratas e seguras para exibir em UI.
-        LatentHiddenNorm     = HNew.norm().item<float>();
-        LatentStochasticNorm = ZNew.norm().item<float>();
-        // O módulo exporta apenas o índice da ação (não os logits), então a
-        // confiança é registrada como uniforme (1/ActionDim). Quando o export
-        // passar a expor logits, troca-se por softmax-max aqui.
-        LastActionConfidence = 1.0f / FMath::Max(1, ActionDim);
-
-        // ── Decodifica poses → FTransform (loc3 + quat4 por bone) ──────────────
-        const float* P = Pose.data_ptr<float>();
-        const int32 NB = FMath::Min<int32>(NumBones, (int32)(Pose.numel() / 7));
-        OutBones.Reserve(NB);
-        for (int32 i = 0; i < NB; ++i)
-        {
-            const int32 Base = i * 7;
-            const FVector Loc(P[Base + 0], P[Base + 1], P[Base + 2]);
-            // quaternion exportado em ordem (x, y, z, w)
-            FQuat Quat(P[Base + 3], P[Base + 4], P[Base + 5], P[Base + 6]);
-            if (!Quat.IsNormalized()) Quat.Normalize();
-            OutBones.Add(FTransform(Quat, Loc, FVector::OneVector));
-        }
-
-        LastActionIndex = (int32)ActionIndex;
-        LastInferenceMs = (float)((FPlatformTime::Seconds() - T0) * 1000.0);
-
-        CMI_DBG("[NativeInfer] ação=%d | bones=%d | %.2fms",
-                LastActionIndex, OutBones.Num(), LastInferenceMs);
-        return LastActionIndex;
+        Obs = ObsEnc;
     }
-    catch (const c10::Error& e)
+    else
     {
-        CMI_DBG("[NativeInfer] ERRO inferência: %s", UTF8_TO_TCHAR(e.what()));
+        // Sem obs (ou tamanho divergente): zeros. Com use_obs=false o modelo
+        // ignora o obs (RSSM recebe None), então o conteúdo não importa.
+        Obs.Init(0.0f, ObsDim);
+    }
+
+    // ── Forward no worker isolado (LibTorch noutro processo) ──────────────────
+    TArray<float> OutH, OutZ, OutPose;
+    int32 ActionIndex = 0;
+    const bool bOk = Torch->Worker.Forward(
+        Torch->H, Torch->Z, Action, Obs, bUseObs && ObsEnc.Num() == ObsDim,
+        OutH, OutZ, ActionIndex, OutPose);
+
+    if (!bOk)
+    {
+        CMI_DBG("[NativeInfer] forward no worker falhou — desativando nativo (cai no fallback).");
+        bModelLoaded = false;
+        Torch->bReady = false;
         return -1;
     }
-#else
-    return -1;
-#endif
+
+    // ── Atualiza estado recorrente (mantido no UE) ────────────────────────────
+    Torch->H = MoveTemp(OutH);
+    Torch->Z = MoveTemp(OutZ);
+    Torch->LastAction = ActionIndex;
+
+    // ── Métricas de debug: normas L2 de h e z (leitura do "pensamento") ───────
+    auto L2 = [](const TArray<float>& V)
+    {
+        double S = 0.0; for (float x : V) S += (double)x * (double)x;
+        return (float)FMath::Sqrt(S);
+    };
+    LatentHiddenNorm     = L2(Torch->H);
+    LatentStochasticNorm = L2(Torch->Z);
+    // O modelo exporta só o índice da ação (não logits) → confiança uniforme.
+    LastActionConfidence = 1.0f / FMath::Max(1, ActionDim);
+
+    // ── Decodifica poses → FTransform (loc3 + quat4 por bone) ─────────────────
+    const int32 NB = FMath::Min<int32>(NumBones, OutPose.Num() / 7);
+    OutBones.Reserve(NB);
+    for (int32 i = 0; i < NB; ++i)
+    {
+        const int32 Base = i * 7;
+        const FVector Loc(
+            OutPose[Base + 0] * PoseTranslationScale,
+            OutPose[Base + 1] * PoseTranslationScale,
+            OutPose[Base + 2] * PoseTranslationScale);
+        // quaternion exportado em ordem (x, y, z, w)
+        FQuat Quat(OutPose[Base + 3], OutPose[Base + 4], OutPose[Base + 5], OutPose[Base + 6]);
+        if (!Quat.IsNormalized()) Quat.Normalize();
+        OutBones.Add(FTransform(Quat, Loc, FVector::OneVector));
+    }
+
+    LastActionIndex = ActionIndex;
+    LastInferenceMs = (float)((FPlatformTime::Seconds() - T0) * 1000.0);
+
+    CMI_DBG("[NativeInfer] ação=%d | bones=%d | %.2fms",
+            LastActionIndex, OutBones.Num(), LastInferenceMs);
+    return LastActionIndex;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RemapPosesToMesh — retargeting por NOME de bone. Reordena as poses geradas
+// (na ordem do modelo) para a ordem de bones do mesh atual, permitindo usar o
+// mesmo .pt em skeletons humanoides diferentes sem retreinar. Mapeia por nome
+// direto; se BoneRemapTable estiver preenchida, usa-a para nomes divergentes.
+bool UCognitiveNativeInferenceComponent::RemapPosesToMesh(
+    const TArray<FTransform>& ModelPoses,
+    USkeletalMeshComponent* Mesh,
+    TArray<FTransform>& OutRemapped) const
+{
+    // Precisa saber os nomes que o modelo gera e ter um mesh válido.
+    if (!Mesh || ModelBoneNames.Num() == 0 || ModelPoses.Num() == 0)
+        return false;
+
+    const int32 MeshBoneCount = Mesh->GetNumBones();
+    if (MeshBoneCount <= 0)
+        return false;
+
+    // Inicializa com identidade — bones do mesh sem correspondência ficam neutros.
+    OutRemapped.Reset();
+    OutRemapped.SetNum(MeshBoneCount);
+    for (FTransform& T : OutRemapped)
+        T = FTransform::Identity;
+
+    const int32 N = FMath::Min(ModelPoses.Num(), ModelBoneNames.Num());
+    int32 Mapped = 0;
+    for (int32 i = 0; i < N; ++i)
+    {
+        const FName ModelBone = ModelBoneNames[i];
+
+        // Resolve o nome correspondente no mesh: tabela, senão nome direto.
+        FName MeshBone = ModelBone;
+        if (const FName* Remapped = BoneRemapTable.Find(ModelBone))
+        {
+            MeshBone = *Remapped;
+        }
+
+        const int32 MeshIndex = Mesh->GetBoneIndex(MeshBone);
+        if (MeshIndex != INDEX_NONE && MeshIndex < MeshBoneCount)
+        {
+            OutRemapped[MeshIndex] = ModelPoses[i];
+            ++Mapped;
+        }
+    }
+
+    // Só considera sucesso se mapeou uma fração razoável (evita aplicar lixo).
+    return Mapped > 0;
 }

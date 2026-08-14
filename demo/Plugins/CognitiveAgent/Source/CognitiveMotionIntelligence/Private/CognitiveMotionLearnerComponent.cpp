@@ -365,6 +365,18 @@ bool UCognitiveMotionLearnerComponent::TickNativeFallback(float DeltaTime)
     // Aplica as poses geradas pelo .pt no esqueleto do NPC.
     if (OutBones.Num() > 0 && AnimInstance.IsValid())
     {
+        // Retargeting: se o NPC usa um skeleton diferente do de treino, remapeia
+        // as poses por nome de bone. Se não houver info de remap, aplica por índice.
+        TArray<FTransform> Remapped;
+        if (USkeletalMeshComponent* Mesh =
+                GetOwner() ? GetOwner()->FindComponentByClass<USkeletalMeshComponent>() : nullptr)
+        {
+            if (Native->RemapPosesToMesh(OutBones, Mesh, Remapped))
+            {
+                AnimInstance->SetBoneTransforms(Remapped);
+                return true;
+            }
+        }
         AnimInstance->SetBoneTransforms(OutBones);
     }
 
@@ -380,10 +392,33 @@ void UCognitiveMotionLearnerComponent::EmitDebugDraw() const
 {
 #if ENABLE_DRAW_DEBUG
     if (!GetOwner() || !GetWorld()) return;
+    if (!bShowDebugOverlay) return;
 
     const FVector Origin = GetOwner()->GetActorLocation() + FVector(0, 0, 100.f);
     const FColor StateColor = bFallbackActive ? FColor::Red : FColor::Green;
     DrawDebugSphere(GetWorld(), Origin, 10.f, 8, StateColor, false, 0.05f);
+
+    // Overlay informativo: ação prevista, confiança e modo (online/fallback).
+    // Compete com o Behavior Tree debugger ao tornar a decisão visível na cena.
+    static const TCHAR* ActNames[] = { TEXT("idle"), TEXT("fwd"), TEXT("back"),
+        TEXT("left"), TEXT("right"), TEXT("run"), TEXT("jump"), TEXT("crouch"),
+        TEXT("stop") };
+    const int32 Act = FMath::Clamp(LastSelectedStyle, 0, 8);
+    const float Conf = MotionQuality.Confidence;
+    const FString Mode = bFallbackActive ? TEXT("OFFLINE (.pt)") : TEXT("ONLINE (Python)");
+    const FString Info = FString::Printf(
+        TEXT("%s\nAção: %s\nConfiança: %.0f%%"),
+        *Mode, ActNames[Act], Conf * 100.f);
+
+    DrawDebugString(GetWorld(), Origin + FVector(0, 0, 30.f), Info,
+        nullptr, StateColor, 0.f, true, 1.2f);
+
+    // Barra de confiança (linha que cresce com a confiança).
+    const FVector BarStart = Origin + FVector(0, 0, 20.f);
+    const FVector BarEnd   = BarStart + FVector(0, FMath::Clamp(Conf, 0.f, 1.f) * 50.f, 0);
+    const FColor BarColor = Conf > 0.5f ? FColor::Green
+                          : (Conf > 0.25f ? FColor::Yellow : FColor::Red);
+    DrawDebugLine(GetWorld(), BarStart, BarEnd, BarColor, false, 0.05f, 0, 4.f);
 
     if (LatestResponse.bValid && LatestResponse.RefinedTrajectory.IsValid())
     {

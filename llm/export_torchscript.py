@@ -146,6 +146,13 @@ def main():
     )
     module.eval()
 
+    # CRÍTICO: liga amostragem determinística (argmax) no RSSM. Sem isto, o .pt
+    # usa torch.multinomial, que crasha (access violation/fastfail) quando roda
+    # via LibTorch dentro do Unreal — o gerador global de RNG do torch não está
+    # inicializado nesse contexto. argmax remove a dependência de RNG e torna a
+    # inferência determinística (desejável para NPCs reproduzíveis).
+    world_model.rssm.deterministic_sampling = True
+
     # Script (não trace — preserva o if/else de use_obs)
     scripted = torch.jit.script(module)
     scripted.save(args.output)

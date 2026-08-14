@@ -65,6 +65,18 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|BoneDriver")
     bool bReplicateLeaderMovement = true;
 
+    // Navegação por NavMesh: quando ativo, as ações direcionais (frente/lados)
+    // viram um destino projetado no NavMesh e o NPC anda evitando obstáculos
+    // (essencial para mundo aberto). Quando inativo, usa movimento direto.
+    // Requer um NavMeshBoundsVolume na cena e um AIController no NPC.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|BoneDriver|Navigation")
+    bool bUseNavMesh = false;
+
+    // Distância (cm) à frente usada como destino ao navegar por NavMesh.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|BoneDriver|Navigation",
+              meta=(ClampMin="100.0", ClampMax="2000.0"))
+    float NavProbeDistance = 500.f;
+
     // Limiar mínimo de velocidade do líder para iniciar o movimento do NPC (cm/s)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|BoneDriver",
               meta=(ClampMin="0.0"))
@@ -119,6 +131,11 @@ private:
     FCognitiveBoneFrame  BuildNPCFrame() const;
     void                 ApplyBoneTransforms(const FCognitiveBoneResponse& Response);
     FString              GetObservationStateString() const;
+
+    // Navega pelo NavMesh na direção da ação. Retorna false se NavMesh/Controller
+    // indisponíveis, sinalizando fallback para movimento direto.
+    bool                 NavigateByAction(class ACharacter* NPCChar,
+                                          const FVector& MoveDir, float Speed);
 
     TWeakObjectPtr<UCognitiveInferenceSubsystem> InferenceSubsystem;
     TWeakObjectPtr<UCognitiveAnimInstance>       CachedAnimInstance;

@@ -2,6 +2,7 @@
 #include "CognitiveContentBrowserMenu.h"
 #include "CognitiveMotionSetupWizard.h"
 #include "SCognitiveDebugDashboard.h"
+#include "SCognitiveTrainingStudio.h"
 #include "CognitiveNPCBoneDriverDetails.h"
 #include "CognitiveNPCBoneDriver.h"
 #include "CognitiveDebugLog.h"
@@ -33,6 +34,8 @@ const FName FCognitiveMotionIntelligenceEditorModule::SetupWizardTabName =
 
 const FName FCognitiveMotionIntelligenceEditorModule::DebugDashboardTabName =
     FName("CognitiveMotionDebugDashboard");
+static const FName TrainingStudioTabName =
+    FName("CognitiveTrainingStudio");
 
 // ─────────────────────────────────────────────────────────────────────────────
 void FCognitiveMotionIntelligenceEditorModule::StartupModule()
@@ -57,6 +60,14 @@ void FCognitiveMotionIntelligenceEditorModule::StartupModule()
         .SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
         .SetMenuType(ETabSpawnerMenuType::Hidden);
 
+    // Register the Training Studio (Treino & Ensino) tab spawner
+    FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+        TrainingStudioTabName,
+        FOnSpawnTab::CreateRaw(this, &FCognitiveMotionIntelligenceEditorModule::OnSpawnTrainingStudioTab))
+        .SetDisplayName(LOCTEXT("StudioTabTitle", "Cognitive Training Studio"))
+        .SetTooltipText(LOCTEXT("StudioTabTooltip", "Treino & Ensino: registre demonstrações e corrija decisões do agente"))
+        .SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory());
+
     // Register Details panel customizations
     RegisterDetailsCustomizations();
 
@@ -73,6 +84,7 @@ void FCognitiveMotionIntelligenceEditorModule::ShutdownModule()
     UToolMenus::UnregisterOwner(this);
     FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SetupWizardTabName);
     FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(DebugDashboardTabName);
+    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TrainingStudioTabName);
     UnregisterDetailsCustomizations();
 }
 
@@ -165,6 +177,16 @@ TSharedRef<SDockTab> FCognitiveMotionIntelligenceEditorModule::OnSpawnDebugDashb
         .Label(LOCTEXT("DashTabTitle", "Cognitive Motion Debug Dashboard"))
         [
             SNew(SCognitiveDebugDashboard)
+        ];
+}
+
+TSharedRef<SDockTab> FCognitiveMotionIntelligenceEditorModule::OnSpawnTrainingStudioTab(
+    const FSpawnTabArgs& SpawnTabArgs)
+{
+    return SNew(SDockTab)
+        .TabRole(ETabRole::NomadTab)
+        [
+            SNew(SCognitiveTrainingStudio)
         ];
 }
 

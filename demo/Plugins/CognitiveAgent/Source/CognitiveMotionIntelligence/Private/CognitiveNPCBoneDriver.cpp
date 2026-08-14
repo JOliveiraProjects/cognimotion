@@ -8,6 +8,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/GameInstance.h"
 #include "HAL/PlatformTime.h"
+#include "NavigationSystem.h"
+#include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "CognitiveInferenceSubsystem.h"
 #include "CognitiveAnimInstance.h"
 #include "CognitiveLeaderObserverComponent.h"
@@ -84,6 +86,26 @@ void UCognitiveNPCBoneDriver::BeginPlay()
     CachedLeaderObserver = GetOwner()
         ? GetOwner()->FindComponentByClass<UCognitiveLeaderObserverComponent>()
         : nullptr;
+
+    // ── Promoção automática para modo Imported ───────────────────────────────
+    // Se o NPC tem um Cognitive Native Inference Component com o .pt carregado,
+    // o caminho de inferência nativa (RunInference) só roda em Imported/Inferring.
+    // Sem isto, o default Observing nunca chama o modelo e o NPC só replica o
+    // líder (flutuando/deslizando). Promover aqui evita depender do checkbox no
+    // Details e garante que o worker isolado seja efetivamente usado.
+    if (ObservationState == ECognitiveObservationState::Observing && GetOwner())
+    {
+        if (UCognitiveNativeInferenceComponent* Native =
+                GetOwner()->FindComponentByClass<UCognitiveNativeInferenceComponent>())
+        {
+            if (Native->IsModelLoaded())
+            {
+                ObservationState = ECognitiveObservationState::Imported;
+                CMI_DBG("[BoneDriver] modelo nativo (.pt) carregado — "
+                        "ObservationState promovido para Imported.");
+            }
+        }
+    }
 }
 
 void UCognitiveNPCBoneDriver::EndPlay(const EEndPlayReason::Type Reason)
@@ -219,26 +241,47 @@ void UCognitiveNPCBoneDriver::TickComponent(
                 if (NPCMove->MaxWalkSpeed < Run)
                     NPCMove->MaxWalkSpeed = Run;
 
+                // Resolve a direção desejada da ação (em espaço do mundo).
+                FVector MoveDir = FVector::ZeroVector;
+                float   MoveSpeed = Walk;
                 switch (Action)
                 {
-                    case 1: NPCMove->RequestDirectMove(Fwd   * Walk, false); break;
-                    case 2: NPCMove->RequestDirectMove(-Fwd  * Walk, false); break;
-                    case 3: NPCMove->RequestDirectMove(-Right* Walk, false); break;
-                    case 4: NPCMove->RequestDirectMove( Right* Walk, false); break;
-                    case 5: NPCMove->RequestDirectMove(Fwd   * Run,  false); break;
-                    case 6:
-                        if (!NPCMove->IsFalling() && !bJumpTriggered)
-                        {
-                            NPCChar->Jump();
-                            bJumpTriggered = true;
-                        }
-                        break;
-                    case 0: case 8:
-                        bJumpTriggered = false;  // reset no idle/stop
-                        NPCMove->StopMovementImmediately();
-                        break;
-                    case 7: NPCMove->RequestDirectMove(Fwd * 100.f, false); break;
-                    default: NPCMove->StopMovementImmediately(); break;
+                    case 1: MoveDir = Fwd;    MoveSpeed = Walk; break;
+                    case 2: MoveDir = -Fwd;   MoveSpeed = Walk; break;
+                    case 3: MoveDir = -Right; MoveSpeed = Walk; break;
+                    case 4: MoveDir = Right;  MoveSpeed = Walk; break;
+                    case 5: MoveDir = Fwd;    MoveSpeed = Run;  break;
+                    case 7: MoveDir = Fwd;    MoveSpeed = 100.f; break;
+                    default: break;
+                }
+
+                if (Action == 6)
+                {
+                    if (!NPCMove->IsFalling() && !bJumpTriggered)
+                    {
+                        NPCChar->Jump();
+                        bJumpTriggered = true;
+                    }
+                }
+                else if (Action == 0 || Action == 8)
+                {
+                    bJumpTriggered = false;  // reset no idle/stop
+                    NPCMove->StopMovementImmediately();
+                }
+                else if (!MoveDir.IsNearlyZero())
+                {
+                    // NAVMESH: interpreta a ação como destino e navega evitando
+                    // obstáculos. Se o NavMesh não estiver disponível ou o ponto
+                    // não projetar, cai no movimento direto (comportamento legado).
+                    bool bNavHandled = false;
+                    if (bUseNavMesh)
+                    {
+                        bNavHandled = NavigateByAction(NPCChar, MoveDir, MoveSpeed);
+                    }
+                    if (!bNavHandled)
+                    {
+                        NPCMove->RequestDirectMove(MoveDir * MoveSpeed, false);
+                    }
                 }
             }
         }
@@ -339,12 +382,34 @@ void UCognitiveNPCBoneDriver::ApplyBoneTransforms(const FCognitiveBoneResponse& 
     // Root motion (opcional)
     if (Response.bApplyRootMotion && GetOwner())
     {
+        // Origem do root motion:
+        //  - Online (servidor): usa Response.RootLocation/RootRotation.
+        //  - Offline/.pt: o servidor não manda root explícito, então extrai do
+        //    root bone (índice 0) das poses geradas. Assim a cápsula segue a
+        //    trajetória real gerada pelo modelo, sem deslizar.
+        FVector TargetLoc = Response.RootLocation;
+        FQuat   TargetRot = Response.RootRotation;
+
+        const bool bHasServerRoot =
+            !Response.RootLocation.IsNearlyZero() || !Response.RootRotation.IsIdentity();
+        if (!bHasServerRoot && Response.BoneTransforms.Num() > 0)
+        {
+            // Root bone = índice 0 (convenção do PoseDecoder: bone 0 é root/pelvis).
+            // A pose é local ao ator; compõe com a transform atual para obter
+            // o deslocamento no mundo.
+            const FTransform& RootBone = Response.BoneTransforms[0];
+            TargetLoc = GetOwner()->GetActorTransform().TransformPosition(
+                RootBone.GetLocation());
+            TargetRot = GetOwner()->GetActorQuat() * RootBone.GetRotation();
+        }
+
         const float Alpha = FMath::Clamp(BlendAlpha, 0.f, 1.f);
         const FVector CurLoc = GetOwner()->GetActorLocation();
         const FQuat   CurRot = GetOwner()->GetActorQuat();
-        const FVector NewLoc = FMath::Lerp(CurLoc, Response.RootLocation, Alpha);
-        const FQuat   NewRot = FQuat::Slerp(CurRot, Response.RootRotation, Alpha);
-        GetOwner()->SetActorLocationAndRotation(NewLoc, NewRot);
+        const FVector NewLoc = FMath::Lerp(CurLoc, TargetLoc, Alpha);
+        const FQuat   NewRot = FQuat::Slerp(CurRot, TargetRot, Alpha);
+        GetOwner()->SetActorLocationAndRotation(NewLoc, NewRot, /*bSweep=*/false,
+            nullptr, ETeleportType::TeleportPhysics);
     }
 }
 
@@ -389,4 +454,51 @@ FString UCognitiveNPCBoneDriver::GetDiagnostics() const
         LastLatencyMs,
         TotalRequestsSent,
         LatestResponse.Confidence);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NavigateByAction — converte a ação direcional num destino e navega pelo
+// NavMesh do UE5, respeitando obstáculos. Retorna true se a navegação foi
+// despachada; false se o NavMesh/Controller não estiverem disponíveis (o
+// chamador então usa o movimento direto como fallback).
+bool UCognitiveNPCBoneDriver::NavigateByAction(
+    ACharacter* NPCChar, const FVector& MoveDir, float Speed)
+{
+    if (!NPCChar) return false;
+
+    UWorld* World = NPCChar->GetWorld();
+    if (!World) return false;
+
+    UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+    if (!NavSys) return false;
+
+    // Destino desejado: à frente da direção da ação, a NavProbeDistance.
+    const FVector Origin = NPCChar->GetActorLocation();
+    const FVector Destination = Origin + MoveDir.GetSafeNormal() * NavProbeDistance;
+
+    // Projeta o destino no NavMesh (acha o ponto navegável mais próximo).
+    FNavLocation NavDest;
+    const FVector Extent(150.f, 150.f, 300.f);
+    if (!NavSys->ProjectPointToNavigation(Destination, NavDest, Extent))
+    {
+        return false;  // sem ponto navegável — fallback para movimento direto
+    }
+
+    // Precisa de um controlador para emitir o move. Sem controller, fallback.
+    AController* Ctrl = NPCChar->GetController();
+    if (!Ctrl)
+    {
+        return false;
+    }
+
+    if (UCharacterMovementComponent* Move = NPCChar->GetCharacterMovement())
+    {
+        Move->MaxWalkSpeed = Speed;
+        Move->SetMovementMode(MOVE_Walking);
+    }
+
+    // SimpleMoveToLocation usa o NavMesh para gerar o caminho e seguir,
+    // evitando obstáculos automaticamente.
+    UAIBlueprintHelperLibrary::SimpleMoveToLocation(Ctrl, NavDest.Location);
+    return true;
 }

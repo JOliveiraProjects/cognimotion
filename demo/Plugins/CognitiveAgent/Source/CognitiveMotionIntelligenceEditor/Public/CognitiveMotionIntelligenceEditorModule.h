@@ -28,6 +28,7 @@ private:
 
     TSharedRef<SDockTab> OnSpawnSetupWizardTab(const FSpawnTabArgs& SpawnTabArgs);
     TSharedRef<SDockTab> OnSpawnDebugDashboardTab(const FSpawnTabArgs& SpawnTabArgs);
+    TSharedRef<SDockTab> OnSpawnTrainingStudioTab(const FSpawnTabArgs& SpawnTabArgs);
 
     TSharedPtr<FTabManager::FLayout> PersistentLayout;
 };

@@ -54,6 +54,11 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cognitive|Learning")
     float MaxInferenceLatencyMs = 2000.f;
 
+    // Overlay 3D de debug na cena (ação prevista, confiança, modo online/offline).
+    // Torna a decisão do NPC visível como num Behavior Tree debugger.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cognitive|Debug")
+    bool bShowDebugOverlay = false;
+
     // RequestIntervalSeconds: frequência de requests ao Python.
     // 0.05s (20Hz) sobrecarregava CPU Python — fila acumulava → timeout → disconnect.
     // 0.5s (2Hz): Python em CPU consegue responder confortavelmente.

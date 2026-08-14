@@ -19,5 +19,8 @@
 			"Name": "CognitiveAgent",
 			"Enabled": true
 		}
+	],
+	"TargetPlatforms": [
+		"Windows"
 	]
 }

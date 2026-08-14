@@ -2,6 +2,7 @@
 #include "CognitiveInferenceSubsystem.h"
 #include "CognitiveAnimInstance.h"
 #include "CognitiveNPCBoneDriver.h"
+#include "CognitiveDebugLog.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/Actor.h"

@@ -50,8 +50,11 @@ from protocol.binary_protocol import (
     MSG_MOTION_REQUEST, MSG_POSE_FRAME, MSG_PING, MSG_PONG,
     MSG_LEADER_SEQUENCE, MSG_AUTONOMOUS_REQUEST,
     MSG_PERCEPTION, MSG_TEACH,
+    MSG_TRAINING_REGISTER, MSG_TEACHING_SCENARIO, MSG_TEACHING_FEEDBACK,
     parse_leader_sequence, parse_autonomous_request, build_motion_action,
     parse_perception, parse_teach,
+    parse_training_register, parse_teaching_scenario,
+    parse_teaching_feedback, build_teaching_choice,
     _parse_header, _build_frame,
 )
 from planning.policy import Policy
@@ -242,6 +245,12 @@ class ClientSession:
             self._handle_perception(full)
         elif mt == MSG_TEACH:
             self._handle_teach(full)
+        elif mt == MSG_TRAINING_REGISTER:
+            self.service.teaching.register_training(parse_training_register(full))
+        elif mt == MSG_TEACHING_SCENARIO:
+            await self._handle_teaching_scenario(full)
+        elif mt == MSG_TEACHING_FEEDBACK:
+            self.service.teaching.feedback(parse_teaching_feedback(full))
         elif mt == MSG_PING:
             self.writer.write(_build_frame(MSG_PONG, sid, b""))
             await self.writer.drain()
@@ -301,6 +310,23 @@ class ClientSession:
     # ──────────────────────────────────────────────────────────────────────────
     # MSG_MOTION_REQUEST → RL inference → MSG_MOTION_ACTION
     # ──────────────────────────────────────────────────────────────────────────
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # MSG_TEACHING_SCENARIO → pede à política de ensino uma reação e responde
+    # MSG_TEACHING_CHOICE (a tela Cognitive Training Studio aguarda essa resposta).
+    # ──────────────────────────────────────────────────────────────────────────
+    async def _handle_teaching_scenario(self, data: bytes) -> None:
+        parsed = parse_teaching_scenario(data)
+        if not parsed:
+            return
+        chosen, conf, rationale = self.service.teaching.decide(parsed)
+        frame = build_teaching_choice(
+            parsed["scenario_id"], chosen, conf, rationale)
+        self.writer.write(frame)
+        await self.writer.drain()
+        logger.info("[%s] ENSINO cenário %d [%s] → '%s' (%.0f%%)",
+                    self.session_id, parsed["scenario_id"],
+                    parsed.get("training_type", "?"), chosen, conf * 100)
 
     async def _handle_motion_request(self, data: bytes, seq_id: int) -> None:
         t0      = time.perf_counter()
@@ -838,6 +864,10 @@ class MotionInferenceService:
         # e este learner aprende percepção→emoção→ação (generaliza fora da demo).
         from learning.demonstration_learning import DemonstrationLearner
         self.demo_learner = DemonstrationLearner(device=str(cfg.device))
+        from learning.teaching_supervisor import TeachingSupervisor
+        self.teaching = TeachingSupervisor(
+            checkpoint_dir=getattr(cfg, "checkpoint_dir", "checkpoints"),
+            device=str(cfg.device))
 
         # ── Per-NPC state manager ────────────────────────────────────────────
         npc_cfg = cfg.npc_session

@@ -58,6 +58,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|NativeInference")
     int32 NumBones = 89;
 
+    // Dimensão da observação (obs_enc) que o .pt espera. O export documenta
+    // obs_enc_dim=256. No modo fallback (use_obs=false) o modelo IGNORA o obs,
+    // então este valor só importa quando há obs real do servidor.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|NativeInference")
+    int32 ObsDim = 256;
+
+    // ── Des-normalização das translações de pose ─────────────────────────────
+    // O pose_decoder do .pt emite translações NORMALIZADAS (range ~[-1,1]); o
+    // modelo não carrega buffers de média/escala. As posições precisam ser
+    // multiplicadas por este fator para virarem centímetros no espaço do UE.
+    // Inspeção do modelo: translações em [0.13..1.12]; ×100 produz um range
+    // humanoide plausível (~6..147 cm). Ajuste se o seu treino usou outra
+    // normalização (ex.: altura do rig). Em 1.0, as poses saem coladas na
+    // origem (esqueleto colapsado → NPC "flutuando"/distorcido).
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|NativeInference")
+    float PoseTranslationScale = 100.0f;
+
     // ── Estado (read-only) ────────────────────────────────────────────────────
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Cognitive|NativeInference|Debug")
     bool bModelLoaded = false;
@@ -106,6 +123,26 @@ public:
     // Reseta o estado recorrente (h,z) — chame ao reativar o NPC.
     UFUNCTION(BlueprintCallable, Category="Cognitive|NativeInference")
     void ResetState();
+
+    // ── Retargeting de skeleton (suporte a meshes diferentes do de treino) ──────
+    // Nomes dos bones na ORDEM que o modelo gera (índice 0..N-1). Por padrão é o
+    // skeleton de referência do treino (Mannequin). Se o mesh do NPC usa outros
+    // nomes, forneça uma RemapTable (modelo→mesh). Sem remap, aplica por índice.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|NativeInference|Retarget")
+    TArray<FName> ModelBoneNames;
+
+    // Tabela opcional de remapeamento: nome do bone no MODELO → nome no MESH.
+    // Para skeletons humanoides com nomes iguais, deixe vazio (mapeia por nome
+    // direto). Para nomes diferentes, preencha (ex.: "spine_01" → "Spine1").
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Cognitive|NativeInference|Retarget")
+    TMap<FName, FName> BoneRemapTable;
+
+    // Reordena as poses geradas (por índice do modelo) para a ordem de bones do
+    // mesh atual, usando nomes + RemapTable. Retorna true se remapeou; false se
+    // não há informação suficiente (o chamador então aplica por índice).
+    bool RemapPosesToMesh(const TArray<FTransform>& ModelPoses,
+                          class USkeletalMeshComponent* Mesh,
+                          TArray<FTransform>& OutRemapped) const;
 
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
